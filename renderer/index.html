@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data: file: blob:;" />
+  <title>Pet Grok</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: transparent; }
+    body { display: flex; align-items: center; justify-content: center; }
+    #stage {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+    }
+    #petCanvas {
+      width: 92%;
+      height: 92%;
+      image-rendering: auto;
+    }
+    #status {
+      position: absolute;
+      left: 50%;
+      bottom: 3%;
+      transform: translateX(-50%);
+      font-family: "Segoe UI", system-ui, sans-serif;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: #fff;
+      background: rgba(15, 25, 45, 0.75);
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      border-radius: 999px;
+      padding: 3px 11px;
+      pointer-events: none;
+      opacity: 0.95;
+      transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+    }
+    #status.st-thinking { background: rgba(40, 90, 180, 0.9); border-color: #7eb6ff; }
+    #status.st-working  { background: rgba(180, 100, 20, 0.92); border-color: #ffc14a; }
+    #status.st-done     { background: rgba(20, 140, 70, 0.92); border-color: #7dffb0; }
+    #status.st-alert    { background: rgba(180, 30, 40, 0.92); border-color: #ff8a8a; }
+    #status.st-sleep    { background: rgba(40, 40, 70, 0.85); border-color: #a8b0d0; }
+    #status.st-wake,
+    #status.st-idle     { background: rgba(15, 25, 45, 0.75); border-color: rgba(255,255,255,0.25); }
+    #status.flash { transform: translateX(-50%) scale(1.06); }
+  </style>
+</head>
+<body>
+  <div id="stage">
+    <canvas id="petCanvas" width="256" height="256"></canvas>
+    <div id="status">boot</div>
+  </div>
+  <script>
+    (function () {
+      const canvas = document.getElementById('petCanvas');
+      const ctx = canvas.getContext('2d');
+      const statusEl = document.getElementById('status');
+      const api = window.petAPI;
+      const ASSET = './assets/race-crab/';
+
+      /**
+       * Motion only on active harness states. Idle/sleep are fully static.
+       */
+      const MOTION = {
+        idle:     { fps: 0, holdMin: 9999, holdMax: 9999, playChance: 0, driftPx: 0, driftSec: 1, static: true },
+        thinking: { fps: 2.5, holdMin: 4.0, holdMax: 7.0, playChance: 0.4, driftPx: 0, driftSec: 1, static: false },
+        working:  { fps: 3.5, holdMin: 3.0, holdMax: 5.0, playChance: 0.5, driftPx: 0, driftSec: 1, static: false },
+        done:     { fps: 6, holdMin: 0.2, holdMax: 0.4, playChance: 1.0, driftPx: 0, driftSec: 1, static: false },
+        alert:    { fps: 4, holdMin: 2.0, holdMax: 4.0, playChance: 0.5, driftPx: 0, driftSec: 1, static: false },
+        sleep:    { fps: 0, holdMin: 9999, holdMax: 9999, playChance: 0, driftPx: 0, driftSec: 1, static: true },
+        wake:     { fps: 5, holdMin: 99, holdMax: 99, playChance: 1.0, driftPx: 0, driftSec: 1, static: false },
+      };
+
+      /** @type {Record<string, {frames: HTMLImageElement[], loop: boolean}>} */
+      let anims = {};
+      let current = 'idle';
+      let frameIndex = 0;
+      let frameAcc = 0;
+      let lastTs = performance.now();
+      let celebrateTimer = null;
+      let wakeTimer = null;
+      let celebrateMs = 1800;
+      let wakeMs = 900;
+      let dragging = false;
+      let overPet = false;
+
+      // Hold / occasional play machine
+      let mode = 'hold'; // 'hold' | 'play'
+      let holdLeft = 2;
+      let playOnce = false;
+
+      function loadImage(src) {
+        return new Promise((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => resolve(img);
+          img.onerror = () => reject(new Error('load failed: ' + src));
+          img.src = src;
+        });
+      }
+
+      function profile(state) {
+        return MOTION[state] || MOTION.idle;
+      }
+
+      function scheduleHold(state) {
+        const p = profile(state);
+        holdLeft = p.holdMin + Math.random() * (p.holdMax - p.holdMin);
+        mode = 'hold';
+        frameIndex = 0;
+        frameAcc = 0;
+      }
+
+      async function loadAnimations() {
+        let meta = null;
+        if (api && api.getAnimations) {
+          meta = await api.getAnimations();
+        }
+        if (!meta) {
+          const res = await fetch(ASSET + 'animations.json');
+          if (!res.ok) throw new Error('animations.json missing');
+          meta = await res.json();
+        }
+        const out = {};
+        for (const [state, def] of Object.entries(meta.animations || {})) {
+          const frames = [];
+          // Prefer first pose + a couple variants only (skip synthetic bob spam if many frames)
+          const list = def.frames || [];
+          const pick = list.length <= 4 ? list : [list[0], list[1] || list[0], list[Math.min(2, list.length - 1)], list[0]];
+          for (const rel of pick) {
+            let src = ASSET + rel;
+            if (api && api.assetPath) {
+              try { src = await api.assetPath(rel); } catch (_) { src = ASSET + rel; }
+            }
+            frames.push(await loadImage(src));
+          }
+          out[state] = {
+            frames,
+            loop: def.loop !== false,
+          };
+        }
+        if (!out.wake && out.idle) out.wake = { frames: out.idle.frames.slice(), loop: false };
+        if (!out.idle && out.thinking) out.idle = out.thinking;
+        return out;
+      }
+
+      function setStatus(text) {
+        statusEl.textContent = text;
+        statusEl.className = 'st-' + text;
+        statusEl.classList.add('flash');
+        void statusEl.offsetWidth;
+        setTimeout(() => statusEl.classList.remove('flash'), 200);
+      }
+
+      function setState(next) {
+        if (!next) return;
+        next = String(next).toLowerCase();
+
+        if (celebrateTimer) { clearTimeout(celebrateTimer); celebrateTimer = null; }
+        if (wakeTimer) { clearTimeout(wakeTimer); wakeTimer = null; }
+
+        if (next === 'wake') {
+          applyState('wake');
+          wakeTimer = setTimeout(() => setState('idle'), wakeMs);
+          return;
+        }
+        if (next === 'done') {
+          applyState('done');
+          // Play celebrate frames once, then settle — no perpetual jumping
+          mode = 'play';
+          playOnce = true;
+          celebrateTimer = setTimeout(() => setState('idle'), celebrateMs);
+          return;
+        }
+        applyState(next);
+      }
+
+      function applyState(name) {
+        if (!anims[name] && anims.idle) name = 'idle';
+        current = name;
+        // Always snap to this state's primary frame immediately so harness
+        // transitions are visible.
+        frameIndex = 0;
+        frameAcc = 0;
+        const p = profile(name);
+        if (p.static) {
+          // Fully frozen pose (idle / sleep)
+          mode = 'hold';
+          holdLeft = 1e9;
+          playOnce = false;
+        } else if (name === 'wake' || name === 'done') {
+          mode = 'play';
+          playOnce = true;
+        } else {
+          scheduleHold(name);
+        }
+        setStatus(name);
+        console.log('[pet] applied state', name, 'frames=', (anims[name] && anims[name].frames.length) || 0);
+      }
+
+      function draw(ts) {
+        const dt = Math.min(0.05, (ts - lastTs) / 1000);
+        lastTs = ts;
+
+        const anim = anims[current] || anims.idle;
+        const p = profile(current);
+
+        if (anim && anim.frames.length) {
+          if (!p.static && mode === 'hold') {
+            holdLeft -= dt;
+            if (holdLeft <= 0) {
+              if (p.playChance > 0 && Math.random() < p.playChance && anim.frames.length > 1) {
+                mode = 'play';
+                frameIndex = 0;
+                frameAcc = 0;
+                playOnce = true;
+              } else {
+                scheduleHold(current);
+              }
+            }
+          } else if (!p.static && mode === 'play') {
+            // short sequence for active states only, then hold frame 0
+            frameAcc += dt * p.fps;
+            while (frameAcc >= 1) {
+              frameAcc -= 1;
+              frameIndex += 1;
+              if (frameIndex >= anim.frames.length) {
+                frameIndex = 0;
+                scheduleHold(current);
+                break;
+              }
+            }
+          } else {
+            // static: always frame 0
+            frameIndex = 0;
+          }
+
+          const img = anim.frames[Math.min(frameIndex, anim.frames.length - 1)];
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.save();
+          ctx.fillStyle = 'rgba(10,20,40,0.16)';
+          ctx.beginPath();
+          ctx.ellipse(128, 238, 68, 9, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.drawImage(img, 0, 0, 256, 256);
+          ctx.restore();
+        } else {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+        requestAnimationFrame(draw);
+      }
+
+      function hitTest(clientX, clientY) {
+        const rect = canvas.getBoundingClientRect();
+        const cx = rect.left + rect.width / 2;
+        const cy = rect.top + rect.height * 0.55;
+        const rx = rect.width * 0.36;
+        const ry = rect.height * 0.40;
+        const dx = (clientX - cx) / rx;
+        const dy = (clientY - cy) / ry;
+        return dx * dx + dy * dy <= 1.15;
+      }
+
+      function updateIgnore(x, y) {
+        if (dragging) return;
+        const hit = hitTest(x, y);
+        if (hit !== overPet) {
+          overPet = hit;
+          if (api) api.setIgnoreMouse(!hit);
+        }
+        if (hit && current === 'sleep') {
+          if (api) api.wakeFromIdle();
+          else setState('idle');
+        }
+      }
+
+      window.addEventListener('mousemove', (e) => {
+        updateIgnore(e.clientX, e.clientY);
+        if (dragging && api) api.dragMove();
+      });
+      window.addEventListener('mousedown', (e) => {
+        if (!hitTest(e.clientX, e.clientY) || e.button !== 0) return;
+        dragging = true;
+        overPet = true;
+        if (api) { api.setIgnoreMouse(false); api.dragStart(); }
+        e.preventDefault();
+      });
+      window.addEventListener('mouseup', () => {
+        if (!dragging) return;
+        dragging = false;
+        if (api) api.dragEnd();
+      });
+      window.addEventListener('contextmenu', (e) => {
+        if (!hitTest(e.clientX, e.clientY)) return;
+        e.preventDefault();
+        if (api) { api.setIgnoreMouse(false); api.showContextMenu(); }
+      });
+      document.addEventListener('mouseleave', () => {
+        if (!dragging && api) { overPet = false; api.setIgnoreMouse(true); }
+      });
+
+      async function init() {
+        try {
+          anims = await loadAnimations();
+          setState('idle');
+        } catch (err) {
+          console.error(err);
+          setStatus('asset error');
+        }
+        requestAnimationFrame(draw);
+
+        if (!api) return;
+
+        try {
+          const theme = await api.getTheme();
+          if (theme?.celebrateMs) celebrateMs = Math.min(theme.celebrateMs, 2000);
+          if (theme?.wakeMs) wakeMs = theme.wakeMs;
+        } catch (_) { /* ignore */ }
+
+        api.onState((s) => setState(s));
+        api.setIgnoreMouse(true);
+      }
+
+      init();
+    })();
+  </script>
+</body>
+</html>

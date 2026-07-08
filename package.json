@@ -1,0 +1,23 @@
+{
+  "name": "pet-grok",
+  "version": "1.0.0",
+  "description": "Always-on-top desktop pet for Grok Build CLI — F1 race engineer crab",
+  "main": "main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/**/*.test.js",
+    "install-hooks": "node -e \"require('./main/hooks').installHooks()\"",
+    "uninstall-hooks": "node -e \"require('./main/hooks').uninstallHooks()\""
+  },
+  "keywords": [
+    "electron",
+    "desktop-pet",
+    "grok",
+    "grok-build"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^33.2.0"
+  }
+}
