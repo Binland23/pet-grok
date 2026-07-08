@@ -9,7 +9,7 @@ const themes = require('../main/themes');
 
 const REQUIRED_STATES = ['idle', 'thinking', 'working', 'done', 'alert', 'sleep', 'wake'];
 const SHIPPED_THEMES = [
-  { id: 'race-crab', name: 'Race Engineer Crab' },
+  { id: 'race-crab', name: 'Hermit Crab' },
   { id: 'cloud-pup', name: 'Cloud Pup' },
   { id: 'bubble-axolotl', name: 'Bubble Axolotl' },
   { id: 'matcha-frog', name: 'Matcha Frog' },

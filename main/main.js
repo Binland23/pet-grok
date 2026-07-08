@@ -61,17 +61,7 @@ function loadTheme(themeId) {
   if (fromDisk) return fromDisk;
   return {
     id: 'race-crab',
-    name: 'Race Engineer Crab',
-    palette: {
-      shell: '#1e3a5f',
-      shellDark: '#0f2438',
-      accent: '#e10600',
-      highlight: '#ffd200',
-      eye: '#ffffff',
-      pupil: '#111111',
-      belly: '#c45c26',
-      claw: '#e10600',
-    },
+    name: 'Hermit Crab',
     celebrateMs: 2500,
     idleTimeoutMs: IDLE_TIMEOUT_MS,
   };
@@ -259,7 +249,7 @@ function createWindow() {
   });
 }
 
-/** Race-engineer crab tray icon (color, not monochrome template). */
+/** Color tray icon (not monochrome template). */
 function createTrayImage() {
   const iconsDir = path.join(__dirname, '..', 'assets', 'icons');
   const candidates = platform.trayIconCandidates();

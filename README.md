@@ -2,7 +2,7 @@
 
 An always-on-top desktop pet for the **Grok Build** CLI. Cute kawaii pets that react in real time to agent lifecycle events (thinking → working → done).
 
-Shipped themes: **Race Engineer Crab**, **Cloud Pup**, **Bubble Axolotl**, **Matcha Frog**, and **Snorlax Buddy** — pick from the dashboard.
+Shipped themes: **Hermit Crab**, **Cloud Pup**, **Bubble Axolotl**, **Matcha Frog**, and **Snorlax Buddy** — pick from the dashboard.
 
 Inspired by clawd-on-desk and Codex Pets.
 
@@ -16,30 +16,42 @@ Inspired by clawd-on-desk and Codex Pets.
 
 ## Quick start
 
-**Double-click shortcuts** (same idea on both OSes):
+### macOS (recommended)
+
+1. **Install Node.js 18+** if needed  
+   - [nodejs.org](https://nodejs.org/) or Homebrew: `brew install node`
+2. **Download / clone** this repo and open the folder in Finder.
+3. **First time only** — double-click **`RUN ME ONCE FIRST.command`**  
+   - If macOS blocks it: right-click → **Open** → **Open**  
+   - If Terminal says permission denied:  
+     `chmod +x "RUN ME ONCE FIRST.command" "RUN ME.command"`  
+   - This runs `npm install` and starts Pet Grok.
+4. **Every later launch** — double-click **`RUN ME.command`**
+5. Confirm a pet is on the desktop and a **menu bar** icon is present (no Dock icon).
+6. In a Grok TUI session: run **`/hooks`**, press **`r`** to reload hooks, and submit a prompt that uses tools — the pet should go **thinking → working → done**.
+
+**Terminal (macOS):**
+
+```bash
+cd /path/to/pet-grok
+npm install   # first time only
+npm start
+```
+
+### Windows
 
 | | First time | Every later launch |
 |---|------------|--------------------|
 | **Windows** | `RUN ME ONCE FIRST.bat` | `RUN ME.bat` |
-| **macOS** | `RUN ME ONCE FIRST.command` | `RUN ME.command` |
 
-On macOS, if Gatekeeper blocks the file: right-click → **Open** → Open.  
-If Terminal says “permission denied”:  
-`chmod +x "RUN ME.command" "RUN ME ONCE FIRST.command"`
+Or `npm install` then `npm start` in the project folder.
 
-**Terminal (either OS):**
+### What first launch does
 
-```bash
-npm install
-npm start
-```
-
-On first launch the app:
-
-1. Opens a transparent, always-on-top pet overlay
-2. Starts a local state server on `http://127.0.0.1:7788`
-3. Auto-installs Grok hooks to `~/.grok/hooks/pet.json` if missing
-4. Shows a system tray / menubar icon (no dock icon on macOS)
+1. Opens a transparent, always-on-top pet overlay  
+2. Starts a local state server on `http://127.0.0.1:7788`  
+3. Auto-installs Grok hooks to `~/.grok/hooks/pet.json` if missing  
+4. Shows a system tray / menu bar icon  
 
 ## How it works
 
@@ -56,10 +68,10 @@ Grok lifecycle event
 | Grok hook event    | Pet state  | Animation                         |
 |--------------------|------------|-----------------------------------|
 | `SessionStart`     | `wake`     | Stretch awake → idle; **unhide** if pet was running but hidden |
-| `UserPromptSubmit` | `thinking` | Head tilt, radio chatter          |
+| `UserPromptSubmit` | `thinking` | Thoughtful pose                   |
 | `PreToolUse`       | `working`  | Laptop typing (vigorous)          |
 | `Stop`             | `done`     | Celebrate briefly → idle          |
-| `Notification`     | `alert`    | Shake / red radio                 |
+| `Notification`     | `alert`    | Surprised / shake                 |
 | `SessionEnd`       | `sleep`    | Zzz                               |
 | *(60s silence)*    | `sleep`    | Idle timeout                      |
 | *(hover while asleep)* | `idle` | Wakes on mouse over pet       |
@@ -138,7 +150,7 @@ After install or refresh: open **`/hooks`** in the TUI and press **`r`** to relo
 
 After installing, start (or reload hooks in) a Grok session — press **`r`** in the `/hooks` modal if the session was already open. Use `/hooks` in the TUI to confirm `pet.json` is loaded. Global hooks under `~/.grok/hooks/` (Windows: `%USERPROFILE%\.grok\hooks\`) are always trusted.
 
-**Requires the pet process running** so `127.0.0.1:7788` is bound. If the pet is quit, hooks fail open and the crab stays idle.
+**Requires the pet process running** so `127.0.0.1:7788` is bound. If the pet is quit, hooks fail open and the overlay stays idle.
 
 ## Tray menu
 
@@ -146,7 +158,7 @@ After installing, start (or reload hooks in) a Grok session — press **`r`** in
 |------|--------|
 | **Open Dashboard…** | Settings window (pets, size, hooks, live status) |
 | Show / Hide Pet | Toggle overlay visibility |
-| Pet | Switch theme (Race Crab / Cloud Pup / Bubble Axolotl / Matcha Frog / Snorlax Buddy) |
+| Pet | Switch theme (Hermit Crab / Cloud Pup / Bubble Axolotl / Matcha Frog / Snorlax Buddy) |
 | Size (S / M / L) | 128 / 192 / 256 px window |
 | Mute | Toggle WEEEE + done celebration SFX |
 | Install / Uninstall Grok Hooks | Manage `pet.json` only |
@@ -161,15 +173,15 @@ Open from the tray or pet context menu (**Open Dashboard…**). From there you c
 - See live server / hook / pet state
 - Change size, visibility, mute
 - Install or refresh Grok hooks
-- Choose a **pet** (Race Crab, Cloud Pup, Bubble Axolotl, Matcha Frog, Snorlax Buddy — drop more under `themes/<id>/` and they appear automatically)
+- Choose a **pet** (Hermit Crab, Cloud Pup, Bubble Axolotl, Matcha Frog, Snorlax Buddy — drop more under `themes/<id>/` and they appear automatically)
 
 
 Other behavior:
 
 - **Single-instance lock** — only one pet process
-- **Draggable** — grab the crab; position is saved across restarts
+- **Draggable** — grab the pet; position is saved across restarts
 - **Click-through** — transparent pixels pass clicks through; only the pet hit-region captures input
-- **Click to focus Grok** — left-click the pet (without dragging) to focus the terminal tab running the active Grok session (`~/.grok/active_sessions.json`); plays a short **click** bounce animation
+- **Click to focus Grok** — left-click the pet (without dragging) to focus the terminal tab running the active Grok session (`~/.grok/active_sessions.json`); plays a short **WEEEE** bounce animation
 - **Idle timeout** — after 60s with no events, the pet sleeps; mouse over wakes it
 
 ## Custom themes
@@ -180,7 +192,7 @@ Shipped:
 
 | Id | Name |
 |----|------|
-| `race-crab` | Race Engineer Crab (default) |
+| `race-crab` | Hermit Crab (default) |
 | `cloud-pup` | Cloud Pup |
 | `bubble-axolotl` | Bubble Axolotl |
 | `matcha-frog` | Matcha Frog |

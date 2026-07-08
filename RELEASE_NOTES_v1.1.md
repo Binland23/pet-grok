@@ -3,7 +3,48 @@
 **Release date:** 2026-07-08  
 **Baseline:** v1.0 (`Pet_Grok_V1.0`)
 
-Desktop companion for the Grok Build CLI. v1.1 turns a single race-crab prototype into a multi-pet, hook-reliable, more playful always-on-top overlay.
+Desktop companion for the Grok Build CLI. v1.1 turns a single-pet prototype into a multi-pet, hook-reliable, more playful always-on-top overlay.
+
+---
+
+## macOS quick start
+
+1. **Install Node.js 18+** if you don’t already have it  
+   - [nodejs.org](https://nodejs.org/) LTS, or Homebrew:  
+     `brew install node`
+2. **Get the project** — clone or download this repo and open the folder in Finder.
+3. **First launch only** — double-click **`RUN ME ONCE FIRST.command`**  
+   - If Gatekeeper blocks it: **right-click → Open → Open**  
+   - If Terminal says “permission denied”:  
+     ```bash
+     chmod +x "RUN ME ONCE FIRST.command" "RUN ME.command"
+     ```
+   - This runs `npm install` and starts Pet Grok.
+4. **Later launches** — double-click **`RUN ME.command`** (or `npm start` in Terminal).
+5. You should see:
+   - A pet on the desktop (always-on-top, transparent)
+   - A **menu bar** icon (no Dock icon)
+6. **Connect to Grok**
+   - Start a Grok Build session (`grok`) in any project.
+   - Run **`/hooks`**, press **`r`** to reload hooks from disk.
+   - Submit a prompt that uses tools — the pet should animate **thinking → working → done**.
+7. **Pick a pet** — menu bar icon or right-click the pet → **Open Dashboard…** → **Pet**, or tray **Pet** submenu.
+
+**Terminal alternative:**
+
+```bash
+cd /path/to/pet-grok
+npm install   # first time
+npm start
+```
+
+**Troubleshooting (macOS):**
+
+| Issue | Fix |
+|-------|-----|
+| Pet doesn’t react to Grok | Pet must be running; Dashboard → **Refresh hooks**; TUI `/hooks` → **`r`** |
+| Port / state stuck | Quit all Pet Grok / Electron instances, then launch again |
+| Hidden pet after last session | Start a new Grok session (SessionStart **unhides** a running pet) or Dashboard → show pet |
 
 ---
 
@@ -17,13 +58,13 @@ Desktop companion for the Grok Build CLI. v1.1 turns a single race-crab prototyp
 
 ---
 
-## New pets
+## Pets
 
 Pick any pet from **Dashboard → Pet** or **tray / right-click → Pet**.
 
 | Id | Name | Notes |
 |----|------|--------|
-| `race-crab` | Race Engineer Crab | Original default (v1.0) |
+| `race-crab` | Hermit Crab | Default (v1.0 art, renamed for branding) |
 | `cloud-pup` | Cloud Pup | Fluffy cloud puppy |
 | `bubble-axolotl` | Bubble Axolotl | Pastel pink axolotl + bubbles |
 | `matcha-frog` | Matcha Frog | Leaf-hat tea-shop frog |
@@ -31,7 +72,7 @@ Pick any pet from **Dashboard → Pet** or **tray / right-click → Pet**.
 
 Each pet includes: **idle**, **thinking**, **working**, **done**, **alert**, **sleep**, **wake**, and **click**.
 
-**Working** is now always **vigorous laptop typing** (continuous loop) for every theme.
+**Working** is always **vigorous laptop typing** (continuous loop) for every theme.
 
 Drop future themes under `themes/<id>/` + `renderer/assets/<id>/` — the dashboard lists them automatically.
 
@@ -41,9 +82,9 @@ Drop future themes under `themes/<id>/` + `renderer/assets/<id>/` — the dashbo
 
 ### Hooks that actually load
 
-v1.0-era localhost **HTTP** hooks never fired: Grok’s HTTP runner **SSRF-blocks** `127.0.0.1`. Relative `./pet-run.sh` commands also often failed to appear in `/hooks`.
+Earlier localhost **HTTP** hooks never fired: Grok’s HTTP runner **SSRF-blocks** `127.0.0.1`. Relative `./pet-run.sh` commands also often failed to appear in `/hooks`.
 
-**v1.1 default install** matches Clawd-style hooks:
+**v1.1 default install** matches proven Clawd-style hooks:
 
 - `type: "command"`
 - Absolute `node` + absolute `~/.grok/hooks/pet-state.js <state>`
@@ -51,7 +92,7 @@ v1.0-era localhost **HTTP** hooks never fired: Grok’s HTTP runner **SSRF-block
 
 After install/refresh: open **`/hooks`**, press **`r`**, and you should see Pet Grok under **Global** next to any Claude/Clawd hooks.
 
-### Lifecycle map (unchanged states, better reliability)
+### Lifecycle map
 
 | Grok event | Pet state |
 |------------|-----------|
@@ -90,7 +131,7 @@ If Pet Grok is **already running** but **hidden**, starting a Grok session posts
 ## Install / upgrade notes
 
 1. Pull `main` (or install this release).
-2. `npm install` if needed, then start Pet Grok (`npm start` or double-click launcher).
+2. **macOS:** double-click `RUN ME ONCE FIRST.command` (first time) or `RUN ME.command` (later); or `npm install` + `npm start`.
 3. Dashboard → **Refresh hooks** (or Install hooks).
 4. In Grok TUI: **`/hooks` → `r`** to reload.
 5. Pick a pet from the dashboard.
@@ -103,11 +144,11 @@ If Pet Grok is **already running** but **hidden**, starting a Grok session posts
 
 | Area | What landed |
 |------|-------------|
-| Multi-pet | Cloud Pup, Bubble Axolotl, Matcha Frog, Snorlax Buddy + race-crab working refresh |
+| Multi-pet | Cloud Pup, Bubble Axolotl, Matcha Frog, Snorlax Buddy + Hermit Crab working refresh |
 | Hooks | Command-mode absolute paths; SSRF-safe; SessionStart show |
 | Dashboard | Pet picker, size, mute, hooks, status |
 | Interaction | Click focus Grok + WEEEE; idle bounce; SFX; laptop working |
-| Docs / tests | README, theme tests, hook tests |
+| Docs / tests | README, macOS quick start, theme tests, hook tests |
 
 ---
 

@@ -1,7 +1,7 @@
 {
   "id": "race-crab",
-  "name": "Race Engineer Crab",
-  "description": "Adorable kawaii race-engineer hermit crab with headset — illustrated sprites",
+  "name": "Hermit Crab",
+  "description": "Round kawaii hermit crab with a soft shell — classic desktop buddy",
   "sprites": {
     "idle": "sprites/idle.png",
     "thinking": "sprites/thinking.png",
