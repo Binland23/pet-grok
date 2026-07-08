@@ -1,0 +1,93 @@
+#!/bin/bash
+# Pet Grok — macOS double-click launcher (same role as RUN ME.bat on Windows)
+# Finder-launched apps get a minimal PATH; load common Node install locations first.
+
+cd "$(dirname "$0")" || exit 1
+
+# --- PATH for double-click / Terminal.app (not an interactive login shell) ---
+if [ -x /usr/libexec/path_helper ]; then
+  eval "$(/usr/libexec/path_helper -s)" 2>/dev/null || true
+fi
+export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin${PATH:+:$PATH}"
+
+if [ -x /opt/homebrew/bin/brew ]; then
+  eval "$(/opt/homebrew/bin/brew shellenv)" 2>/dev/null || true
+elif [ -x /usr/local/bin/brew ]; then
+  eval "$(/usr/local/bin/brew shellenv)" 2>/dev/null || true
+fi
+
+# nvm
+if [ -s "$HOME/.nvm/nvm.sh" ]; then
+  # shellcheck source=/dev/null
+  . "$HOME/.nvm/nvm.sh" 2>/dev/null || true
+fi
+# fnm
+if [ -x "$HOME/.local/share/fnm/fnm" ]; then
+  eval "$("$HOME/.local/share/fnm/fnm" env)" 2>/dev/null || true
+elif command -v fnm >/dev/null 2>&1; then
+  eval "$(fnm env)" 2>/dev/null || true
+fi
+# volta
+if [ -x "$HOME/.volta/bin/volta" ]; then
+  export PATH="$HOME/.volta/bin:$PATH"
+fi
+# asdf
+if [ -s "$HOME/.asdf/asdf.sh" ]; then
+  # shellcheck source=/dev/null
+  . "$HOME/.asdf/asdf.sh" 2>/dev/null || true
+fi
+
+clear 2>/dev/null || true
+
+echo "========================================"
+echo " Pet Grok — starting"
+echo "========================================"
+echo ""
+echo "Working directory: $(pwd)"
+echo ""
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "ERROR: Node.js is not on PATH."
+  echo "Install Node 18+ from https://nodejs.org or via Homebrew:"
+  echo "  brew install node"
+  echo ""
+  echo "If Node is already installed, open Terminal, run:"
+  echo "  which node"
+  echo "then open this file from that same environment, or add Node to PATH."
+  echo ""
+  read -r -p "Press Enter to close..." _
+  exit 1
+fi
+
+if ! command -v npm >/dev/null 2>&1; then
+  echo "ERROR: npm is not on PATH."
+  echo ""
+  read -r -p "Press Enter to close..." _
+  exit 1
+fi
+
+if [ ! -d "node_modules/electron" ]; then
+  echo "Electron is not installed yet."
+  echo "Double-click \"RUN ME ONCE FIRST.command\" first (or run it from Terminal)."
+  echo ""
+  read -r -p "Press Enter to close..." _
+  exit 1
+fi
+
+echo "Refreshing Grok hooks (~/.grok/hooks/pet.json) ..."
+if ! node -e "const h=require('./main/hooks'); console.log('hooks:', h.installHooks());"; then
+  echo "WARNING: could not install hooks — pet may not react to Grok TUI."
+fi
+
+echo ""
+echo "Starting Pet Grok on 127.0.0.1:7788 ..."
+echo "Close this window or press Ctrl+C to stop the pet."
+echo ""
+
+npm start
+status=$?
+
+echo ""
+echo "Pet Grok exited (code $status)."
+read -r -p "Press Enter to close..." _
+exit "$status"

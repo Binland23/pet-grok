@@ -8,18 +8,26 @@ Inspired by clawd-on-desk and Codex Pets.
 
 - Node.js 18+
 - npm
-- **macOS** (primary target) or Linux. Windows is best-effort only.
+- **macOS** or **Windows** (first-class; same codebase)
 - Grok Build CLI (`grok`) for live reactions
-- `curl` on `PATH` (used by hooks)
+- System `node` on `PATH` (hooks call Node, not the Electron binary)
 
 ## Quick start
 
-**Windows (double-click):**
+**Double-click shortcuts** (same idea on both OSes):
 
-1. First time only: **`RUN ME ONCE FIRST.bat`** — installs dependencies and starts the pet  
-2. Later: **`RUN ME.bat`** — starts the pet  
+| | First time | Every later launch |
+|---|------------|--------------------|
+| **Windows** | `RUN ME ONCE FIRST.bat` | `RUN ME.bat` |
+| **macOS** | `RUN ME ONCE FIRST.command` | `RUN ME.command` |
 
-**Terminal:**
+On macOS, if Gatekeeper blocks the file: right-click → **Open** → Open.  
+If Terminal says “permission denied”:  
+`chmod +x "RUN ME.command" "RUN ME ONCE FIRST.command"`
+
+(`start.command` is a thin alias that runs `RUN ME.command`.)
+
+**Terminal (either OS):**
 
 ```bash
 npm install
@@ -95,72 +103,26 @@ npm run uninstall-hooks
 
 ### Generated `~/.grok/hooks/pet.json`
 
-On **macOS/Linux** (primary target) commands use `curl`. On **Windows** the installer writes `curl.exe` so PowerShell’s `curl` alias does not break hooks.
+Hooks run a small Node helper (`pet-state.js`) that POSTs plain text to `127.0.0.1:7788/state`. Platform-specific install:
+
+| OS | Command shape | Extra files |
+|----|---------------|-------------|
+| **macOS** | `"node" "…/pet-state.js" thinking` | `pet-state.js` |
+| **Windows** | `"…\pet-run.cmd" thinking` | `pet-state.js` + `pet-run.cmd` |
+
+`pet-run.cmd` avoids PowerShell’s `curl` alias and CreateProcess path-with-spaces issues. Paths with spaces (e.g. `C:\Users\First Last\…`) are quoted.
+
+Example (macOS / Linux):
 
 ```json
 {
   "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "curl -s -X POST 127.0.0.1:7788/state -d wake",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
     "UserPromptSubmit": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "curl -s -X POST 127.0.0.1:7788/state -d thinking",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "curl -s -X POST 127.0.0.1:7788/state -d working",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "curl -s -X POST 127.0.0.1:7788/state -d done",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "Notification": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "curl -s -X POST 127.0.0.1:7788/state -d alert",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "SessionEnd": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "curl -s -X POST 127.0.0.1:7788/state -d sleep",
+            "command": "\"/usr/local/bin/node\" \"/Users/you/.grok/hooks/pet-state.js\" thinking",
             "timeout": 5
           }
         ]
@@ -170,7 +132,27 @@ On **macOS/Linux** (primary target) commands use `curl`. On **Windows** the inst
 }
 ```
 
-After installing, start (or reload hooks in) a Grok session. Use `/hooks` in the TUI to confirm `pet.json` is loaded. Global hooks under `~/.grok/hooks/` are always trusted.
+Example (Windows):
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"C:\\Users\\you\\.grok\\hooks\\pet-run.cmd\" thinking",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+After installing, start (or reload hooks in) a Grok session. Use `/hooks` in the TUI to confirm `pet.json` is loaded. Global hooks under `~/.grok/hooks/` (Windows: `%USERPROFILE%\.grok\hooks\`) are always trusted.
 
 ## Tray menu
 
@@ -233,10 +215,17 @@ The pet view is a **single** `renderer/index.html` that loads theme sprites from
 ```
 ├── package.json
 ├── README.md
+├── RUN ME.command              # macOS daily launcher (double-click)
+├── RUN ME ONCE FIRST.command   # macOS first-time install + start
+├── start.command               # alias → RUN ME.command
+├── RUN ME.bat                  # Windows daily launcher
+├── RUN ME ONCE FIRST.bat       # Windows first-time install + start
 ├── main/
 │   ├── main.js           # window, tray, single-instance, IPC
+│   ├── platform.js       # OS helpers (AOT, tray, file URLs)
 │   ├── state-server.js   # 127.0.0.1:7788
 │   ├── hooks.js          # install/uninstall pet.json
+│   ├── pet-state-hook.js # bundled helper copied into ~/.grok/hooks
 │   └── prefs.js          # position, size, mute
 ├── preload/
 │   └── preload.js
@@ -247,10 +236,23 @@ The pet view is a **single** `renderer/index.html` that loads theme sprites from
         └── theme.json
 ```
 
+## Platform notes
+
+| Topic | macOS | Windows |
+|-------|-------|---------|
+| Overlay | Always-on-top, all Spaces, hide Dock | Always-on-top, skip taskbar; not over exclusive fullscreen games |
+| Tray | Menu bar icon; right-click menu | Notification area; left-click opens menu |
+| Hooks dir | `~/.grok/hooks/` | `%USERPROFILE%\.grok\hooks\` |
+| Manual curl | `curl -s -X POST …` | Use `curl.exe` (not PowerShell’s `curl` alias) |
+| Launcher | `RUN ME.command` or `npm start` | `RUN ME.bat` or `npm start` |
+| App identity | Dock hidden | `AppUserModelId` `com.petgrok.app` |
+
+Click-through (transparent pixels) and drag work on both OSes. Window size is re-applied on drag to avoid DPI size growth on Windows.
+
 ## End-to-end check with Grok
 
 1. `npm start` (hooks auto-install).
-2. Confirm hooks file: `cat ~/.grok/hooks/pet.json`
+2. Confirm hooks file: `cat ~/.grok/hooks/pet.json` (Windows: type the same path under `%USERPROFILE%`).
 3. In a project: `grok`
 4. Submit a prompt that uses tools.
 5. Watch the pet: **thinking** → **working** → **done** (celebrate) → **idle**.

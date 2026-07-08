@@ -27,14 +27,16 @@ const EVENT_STATE_MAP = {
 /**
  * Resolve a node executable. When install runs inside Electron, process.execPath
  * is electron.exe — so prefer `node` on PATH.
+ * @param {{ platform?: string }} [opts]
  */
-function resolveNodeBinary() {
+function resolveNodeBinary(opts = {}) {
+  const platform = opts.platform || process.platform;
   const base = path.basename(process.execPath).toLowerCase();
   if (base === 'node' || base === 'node.exe') {
     return process.execPath;
   }
   try {
-    if (process.platform === 'win32') {
+    if (platform === 'win32') {
       const out = execSync('where node', { encoding: 'utf8' });
       const first = out
         .split(/\r?\n/)
@@ -51,41 +53,68 @@ function resolveNodeBinary() {
   return 'node';
 }
 
-function quoteForShell(p) {
-  // Safe double-quoted path for cmd / bash
-  return `"${String(p).replace(/"/g, '\\"')}"`;
+/**
+ * Quote a path for shell / cmd consumption when it contains spaces or specials.
+ * Always quote on Windows for CreateProcess safety with spaces in USERPROFILE.
+ * @param {string} p
+ * @param {string} [platform]
+ */
+function quoteForShell(p, platform = process.platform) {
+  const s = String(p);
+  if (platform === 'win32') {
+    // cmd-safe double quotes; escape inner quotes
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return `"${s.replace(/"/g, '\\"')}"`;
 }
 
 /**
  * Build command that Grok will run.
- * Windows: pet-run.cmd (path has no spaces under ~/.grok/hooks) so CreateProcess
- * / PowerShell / cmd all parse args correctly. The .cmd invokes node + pet-state.js.
+ * Windows: pet-run.cmd so CreateProcess / PowerShell / cmd parse args correctly.
  * macOS/Linux: node + absolute script path.
+ * @param {string} state
+ * @param {{
+ *   nodeBin?: string,
+ *   scriptPath?: string,
+ *   runnerPath?: string,
+ *   platform?: string,
+ * }} [opts]
  */
 function stateCommand(state, opts = {}) {
-  const nodeBin = opts.nodeBin || resolveNodeBinary();
+  const platform = opts.platform || process.platform;
+  const nodeBin = opts.nodeBin || resolveNodeBinary({ platform });
   const scriptPath = opts.scriptPath || HOOK_SCRIPT;
   const runnerPath = opts.runnerPath || HOOK_RUNNER;
 
-  if (process.platform === 'win32') {
-    // No quotes needed — homedir path typically has no spaces; .cmd receives %1
-    return `${runnerPath} ${state}`;
+  if (platform === 'win32') {
+    // Quote runner path so "C:\Users\First Last\.grok\hooks\pet-run.cmd" works
+    return `${quoteForShell(runnerPath, platform)} ${state}`;
   }
-  return `${quoteForShell(nodeBin)} ${quoteForShell(scriptPath)} ${state}`;
+  return `${quoteForShell(nodeBin, platform)} ${quoteForShell(scriptPath, platform)} ${state}`;
 }
 
 /** Fallback curl one-liner (used only if forced). */
-function curlStateCommand(state) {
-  const bin = process.platform === 'win32' ? 'curl.exe' : 'curl';
+function curlStateCommand(state, opts = {}) {
+  const platform = opts.platform || process.platform;
+  const bin = platform === 'win32' ? 'curl.exe' : 'curl';
   return `${bin} -s -X POST ${HOST}:${PORT}/state -d ${state}`;
 }
 
+/**
+ * @param {{
+ *   forceCurl?: boolean,
+ *   nodeBin?: string,
+ *   scriptPath?: string,
+ *   runnerPath?: string,
+ *   platform?: string,
+ * }} [opts]
+ */
 function makeHooksPayload(opts = {}) {
   /** @type {Record<string, unknown>} */
   const hooks = {};
   for (const [event, state] of Object.entries(EVENT_STATE_MAP)) {
     const command = opts.forceCurl
-      ? curlStateCommand(state)
+      ? curlStateCommand(state, opts)
       : stateCommand(state, opts);
     hooks[event] = [
       {
@@ -108,14 +137,18 @@ function isInstalled() {
   return fs.existsSync(HOOK_FILE);
 }
 
-function installHookScript() {
+/**
+ * @param {{ platform?: string, nodeBin?: string }} [opts]
+ */
+function installHookScript(opts = {}) {
+  const platform = opts.platform || process.platform;
   fs.mkdirSync(HOOKS_DIR, { recursive: true });
   const src = fs.readFileSync(BUNDLED_SCRIPT, 'utf8');
   fs.writeFileSync(HOOK_SCRIPT, src, 'utf8');
 
-  if (process.platform === 'win32') {
-    const nodeBin = resolveNodeBinary();
-    // cmd wrapper: reliable under Grok's Windows hook runner (no space-splitting issues)
+  if (platform === 'win32') {
+    const nodeBin = opts.nodeBin || resolveNodeBinary({ platform });
+    // cmd wrapper: reliable under Grok's Windows hook runner
     const cmdBody = [
       '@echo off',
       'setlocal',
@@ -126,18 +159,30 @@ function installHookScript() {
       '',
     ].join('\r\n');
     fs.writeFileSync(HOOK_RUNNER, cmdBody, 'utf8');
+  } else if (fs.existsSync(HOOK_RUNNER)) {
+    // Current platform is not Windows — remove stale .cmd from dual-boot
+    try {
+      fs.unlinkSync(HOOK_RUNNER);
+    } catch {
+      /* ignore */
+    }
   }
   return HOOK_SCRIPT;
 }
 
-function installHooks() {
+/**
+ * @param {{ platform?: string, nodeBin?: string }} [opts]
+ */
+function installHooks(opts = {}) {
+  const platform = opts.platform || process.platform;
   fs.mkdirSync(HOOKS_DIR, { recursive: true });
-  installHookScript();
-  const nodeBin = resolveNodeBinary();
+  const nodeBin = opts.nodeBin || resolveNodeBinary({ platform });
+  installHookScript({ platform, nodeBin });
   const payload = makeHooksPayload({
     nodeBin,
     scriptPath: HOOK_SCRIPT,
     runnerPath: HOOK_RUNNER,
+    platform,
   });
   fs.writeFileSync(HOOK_FILE, JSON.stringify(payload, null, 2) + '\n', 'utf8');
   return HOOK_FILE;
@@ -182,6 +227,7 @@ module.exports = {
   PET_HOOKS,
   EVENT_STATE_MAP,
   resolveNodeBinary,
+  quoteForShell,
   stateCommand,
   curlStateCommand,
   makeHooksPayload,

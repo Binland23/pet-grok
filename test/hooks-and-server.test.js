@@ -109,10 +109,48 @@ describe('hooks payload (real makeHooksPayload)', () => {
     }
   });
 
+  it('generates win32 commands with pet-run.cmd even when not on Windows', () => {
+    const payload = hooks.makeHooksPayload({
+      platform: 'win32',
+      nodeBin: 'C:\\\\Users\\\\First Last\\\\node.exe',
+      runnerPath: 'C:\\\\Users\\\\First Last\\\\.grok\\\\hooks\\\\pet-run.cmd',
+      scriptPath: 'C:\\\\Users\\\\First Last\\\\.grok\\\\hooks\\\\pet-state.js',
+    });
+    const cmd = payload.hooks.UserPromptSubmit[0].hooks[0].command;
+    assert.match(cmd, /pet-run\.cmd/);
+    assert.match(cmd, /thinking/);
+    assert.match(cmd, /"/); // quoted for space-safe paths
+    assert.doesNotMatch(cmd, /pet-state\.js thinking/); // runner, not direct node
+  });
+
+  it('generates darwin commands with quoted node + pet-state.js', () => {
+    const payload = hooks.makeHooksPayload({
+      platform: 'darwin',
+      nodeBin: '/usr/local/bin/node',
+      scriptPath: '/Users/Test User/.grok/hooks/pet-state.js',
+    });
+    const cmd = payload.hooks.PreToolUse[0].hooks[0].command;
+    assert.match(cmd, /pet-state\.js/);
+    assert.match(cmd, /working/);
+    assert.match(cmd, /"/);
+    assert.doesNotMatch(cmd, /pet-run\.cmd/);
+  });
+
+  it('forceCurl uses curl.exe on win32 and curl elsewhere', () => {
+    assert.match(
+      hooks.curlStateCommand('done', { platform: 'win32' }),
+      /^curl\.exe /
+    );
+    assert.match(hooks.curlStateCommand('done', { platform: 'darwin' }), /^curl /);
+  });
+
   it('installHooks writes pet.json + helper scripts with safe commands', () => {
     const prev = hooks.isInstalled() ? fs.readFileSync(hooks.HOOK_FILE, 'utf8') : null;
     const prevScript = fs.existsSync(hooks.HOOK_SCRIPT)
       ? fs.readFileSync(hooks.HOOK_SCRIPT, 'utf8')
+      : null;
+    const prevRunner = fs.existsSync(hooks.HOOK_RUNNER)
+      ? fs.readFileSync(hooks.HOOK_RUNNER, 'utf8')
       : null;
     try {
       const p = hooks.installHooks();
@@ -132,7 +170,37 @@ describe('hooks payload (real makeHooksPayload)', () => {
       if (prev != null) fs.writeFileSync(hooks.HOOK_FILE, prev, 'utf8');
       else if (hooks.isInstalled()) fs.unlinkSync(hooks.HOOK_FILE);
       if (prevScript != null) fs.writeFileSync(hooks.HOOK_SCRIPT, prevScript, 'utf8');
+      if (prevRunner != null) fs.writeFileSync(hooks.HOOK_RUNNER, prevRunner, 'utf8');
+      else if (fs.existsSync(hooks.HOOK_RUNNER) && process.platform !== 'win32') {
+        try {
+          fs.unlinkSync(hooks.HOOK_RUNNER);
+        } catch {
+          /* ignore */
+        }
+      }
     }
+  });
+});
+
+describe('platform helpers', () => {
+  const platform = require('../main/platform');
+
+  it('pathToAssetUrl produces a file URL', () => {
+    const sample =
+      process.platform === 'win32'
+        ? 'C:\\\\Users\\\\First Last\\\\pet\\\\frame.png'
+        : '/Users/First Last/pet/frame.png';
+    const url = platform.pathToAssetUrl(sample);
+    assert.match(url, /^file:/);
+    assert.ok(url.includes('frame.png') || url.includes('frame.png'.replace(/\//g, '%2F')));
+  });
+
+  it('exposes consistent tray / chrome flags', () => {
+    assert.equal(typeof platform.trayOpensOnClick(), 'boolean');
+    assert.ok(Array.isArray(platform.trayIconCandidates()));
+    assert.ok(platform.trayIconCandidates().length > 0);
+    assert.equal(typeof platform.restartHint(), 'string');
+    assert.ok(platform.restartHint().length > 10);
   });
 });
 

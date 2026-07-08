@@ -16,6 +16,7 @@ const {
 const prefs = require('./prefs');
 const hooks = require('./hooks');
 const { startStateServer } = require('./state-server');
+const platform = require('./platform');
 
 const IDLE_TIMEOUT_MS = 60_000;
 const THEMES_DIR = path.join(__dirname, '..', 'themes');
@@ -189,6 +190,7 @@ function createWindow() {
     focusable: true,
     show: false,
     backgroundColor: '#00000000',
+    ...platform.windowPlatformOptions(),
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload', 'preload.js'),
       contextIsolation: true,
@@ -197,12 +199,8 @@ function createWindow() {
     },
   });
 
-  mainWindow.setAlwaysOnTop(true, 'screen-saver');
-  try {
-    mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  } catch {
-    mainWindow.setVisibleOnAllWorkspaces(true);
-  }
+  platform.setAlwaysOnTopSafe(mainWindow);
+  platform.setVisibleOnAllWorkspacesSafe(mainWindow);
 
   mainWindow.setIgnoreMouseEvents(true, { forward: true });
 
@@ -231,10 +229,7 @@ function createWindow() {
 /** Race-engineer crab tray icon (color, not monochrome template). */
 function createTrayImage() {
   const iconsDir = path.join(__dirname, '..', 'assets', 'icons');
-  const candidates =
-    process.platform === 'win32'
-      ? ['tray.ico', 'tray-32.png', 'tray-16.png', 'tray-256.png']
-      : ['tray-32.png', 'tray-16.png', 'tray-64.png', 'tray-256.png', 'tray.ico'];
+  const candidates = platform.trayIconCandidates();
 
   for (const name of candidates) {
     const p = path.join(iconsDir, name);
@@ -242,7 +237,7 @@ function createTrayImage() {
     let img = nativeImage.createFromPath(p);
     if (img.isEmpty()) continue;
     // Menubar / tray prefers a small bitmap
-    const size = process.platform === 'darwin' ? 22 : 16;
+    const size = platform.trayIconSize();
     if (img.getSize().width > size * 2) {
       img = img.resize({ width: size, height: size, quality: 'best' });
     }
@@ -366,7 +361,7 @@ function createTray() {
   tray = new Tray(createTrayImage());
   rebuildTray();
   tray.on('click', () => {
-    if (process.platform === 'darwin') return;
+    if (!platform.trayOpensOnClick()) return;
     tray.popUpContextMenu();
   });
 }
@@ -394,8 +389,8 @@ function registerIpc() {
   ipcMain.handle('pet:asset-path', (_e, rel) => {
     // Return file:// URL for a renderer asset under assets/race-crab/
     const safe = String(rel || '').replace(/\\/g, '/').replace(/\.\./g, '');
-    const abs = path.join(__dirname, '..', 'renderer', 'assets', 'race-crab', safe);
-    return 'file:///' + abs.replace(/\\/g, '/');
+    const abs = path.join(__dirname, '..', 'renderer', 'assets', 'race-crab', ...safe.split('/').filter(Boolean));
+    return platform.pathToAssetUrl(abs);
   });
 
   ipcMain.on('pet:set-ignore', (_e, ignore) => {
@@ -469,10 +464,7 @@ function maybeAutoInstallHooks() {
 
 app.whenReady().then(async () => {
   state = prefs.load();
-
-  if (process.platform === 'darwin' && app.dock) {
-    app.dock.hide();
-  }
+  platform.configureAppChrome(app);
 
   // Bind state server FIRST so hooks have a live target before window paints
   try {
@@ -490,7 +482,9 @@ app.whenReady().then(async () => {
     try {
       dialog.showErrorBox(
         'Pet Grok — port 7788 in use',
-        'Could not bind 127.0.0.1:7788.\n\nQuit other Pet Grok / Electron instances, then run RUN ME.bat again.\n\n' +
+        'Could not bind 127.0.0.1:7788.\n\n' +
+          platform.restartHint() +
+          '\n\n' +
           String(err.message || err)
       );
     } catch {
