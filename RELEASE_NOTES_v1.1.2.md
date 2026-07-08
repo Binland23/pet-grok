@@ -1,4 +1,4 @@
-# Pet Grok v1.1.1
+# Pet Grok v1.1.2
 
 Release date: 2026-07-08
 
@@ -11,6 +11,7 @@ This patch makes Pet Grok substantially easier to download and safer to distribu
 - Electron runtime updated to a patched version
 - Sleepy pet renamed to the original **Doze Buddy** identity
 - Durable download link and platform guidance added to the README
+- Corrected the Windows application icon source so the installer packages successfully
 
 ## Installation note
 
