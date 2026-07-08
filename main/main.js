@@ -114,6 +114,32 @@ function appendPushLog(line) {
   }
 }
 
+/**
+ * Surface the pet overlay if this process is running.
+ * Used on Grok SessionStart (wake): even if the user hid the pet earlier,
+ * starting a Grok session brings it back. Does not launch a new process.
+ * @param {string} [reason]
+ */
+function forceShowPet(reason) {
+  const s = getState();
+  let prefsChanged = false;
+  if (s.visible === false) {
+    s.visible = true;
+    prefs.save(s);
+    prefsChanged = true;
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (!mainWindow.isVisible()) {
+      mainWindow.showInactive();
+    }
+  }
+  appendPushLog(`[forceShow] ${reason || 'show'} visible=true prefsChanged=${prefsChanged}`);
+  if (prefsChanged) {
+    rebuildTray();
+    broadcastDashboardSnapshot();
+  }
+}
+
 function pushState(petState) {
   const at = Date.now();
   lastKnownState = petState;
@@ -137,8 +163,11 @@ function pushState(petState) {
     } else {
       send();
     }
-    // Keep window visible when agent is active
-    if (petState !== 'sleep' && !mainWindow.isVisible() && getState().visible !== false) {
+    // SessionStart → wake: always unhide if the pet app is already running
+    if (petState === 'wake') {
+      forceShowPet('session-start-wake');
+    } else if (petState !== 'sleep' && !mainWindow.isVisible() && getState().visible !== false) {
+      // Other active states: only re-show if not intentionally hidden
       mainWindow.showInactive();
     }
   }
@@ -651,10 +680,16 @@ app.whenReady().then(async () => {
 
   // Bind state server FIRST so hooks have a live target before window paints
   try {
-    stateServer = await startStateServer((petState) => {
-      console.log('[state]', petState);
-      pushState(petState);
-    });
+    stateServer = await startStateServer(
+      (petState) => {
+        console.log('[state]', petState);
+        pushState(petState);
+      },
+      {
+        // POST /show — unhide if already running (used by tests / manual curl)
+        onShow: () => forceShowPet('http-show'),
+      }
+    );
   } catch (err) {
     console.error(
       '[state-server] FAILED to bind 127.0.0.1:7788 — another Pet Grok may be running.',

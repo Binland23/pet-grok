@@ -238,9 +238,16 @@ describe('state server HTTP (real startStateServer)', () => {
   let port;
   /** @type {string[]} */
   const received = [];
+  let showCalls = 0;
 
   before(async () => {
-    server = await startStateServer((s) => received.push(s), { port: 0 });
+    showCalls = 0;
+    server = await startStateServer((s) => received.push(s), {
+      port: 0,
+      onShow: () => {
+        showCalls += 1;
+      },
+    });
     port = server.server.address().port;
   });
 
@@ -257,6 +264,18 @@ describe('state server HTTP (real startStateServer)', () => {
     }
     assert.deepEqual(received, ['thinking', 'working', 'done']);
     assert.equal(server.getLastState(), 'done');
+  });
+
+  it('POST /show invokes onShow without changing pet state', async () => {
+    received.length = 0;
+    showCalls = 0;
+    const before = server.getLastState();
+    const r = await post(port, '/show', '');
+    assert.equal(r.status, 200);
+    assert.match(r.body, /"shown"\s*:\s*true/);
+    assert.equal(showCalls, 1);
+    assert.equal(server.getLastState(), before);
+    assert.deepEqual(received, []);
   });
 
   it('POST /hook with Grok event JSON maps to pet states (shipped HTTP hook path)', async () => {

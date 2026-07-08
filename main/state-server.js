@@ -121,11 +121,12 @@ function mapHookEventToState(eventName) {
 /**
  * Tiny localhost state server.
  * @param {(state: string) => void} onState
- * @param {{ host?: string, port?: number }} [opts]
+ * @param {{ host?: string, port?: number, onShow?: () => void }} [opts]
  */
 function startStateServer(onState, opts = {}) {
   const host = opts.host || HOST;
   const port = opts.port != null ? opts.port : PORT;
+  const onShow = typeof opts.onShow === 'function' ? opts.onShow : null;
 
   let lastState = 'idle';
   let lastAt = Date.now();
@@ -177,6 +178,21 @@ function startStateServer(onState, opts = {}) {
     if (req.method === 'GET' && url === '/state') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ state: lastState, lastAt, history: history.slice(-12) }));
+      return;
+    }
+
+    // Unhide pet overlay if the app process is already running (no-op if not)
+    if (req.method === 'POST' && (url === '/show' || url.startsWith('/show?'))) {
+      req.resume();
+      req.on('end', () => {
+        try {
+          if (onShow) onShow();
+        } catch (err) {
+          console.error('[state-server] onShow error', err);
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, shown: true }));
+      });
       return;
     }
 

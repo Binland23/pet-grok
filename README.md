@@ -55,7 +55,7 @@ Grok lifecycle event
 
 | Grok hook event    | Pet state  | Animation                         |
 |--------------------|------------|-----------------------------------|
-| `SessionStart`     | `wake`     | Stretch awake → idle              |
+| `SessionStart`     | `wake`     | Stretch awake → idle; **unhide** if pet was running but hidden |
 | `UserPromptSubmit` | `thinking` | Head tilt, radio chatter          |
 | `PreToolUse`       | `working`  | Laptop typing (vigorous)          |
 | `Stop`             | `done`     | Celebrate briefly → idle          |
@@ -75,7 +75,10 @@ curl -s -X POST 127.0.0.1:7788/state -d done
 curl -s -X POST 127.0.0.1:7788/state -d alert
 curl -s -X POST 127.0.0.1:7788/state -d sleep
 curl -s -X POST 127.0.0.1:7788/state -d wake
+curl -s -X POST 127.0.0.1:7788/show
 ```
+
+`POST /show` (and SessionStart → `wake`) re-shows a **running but hidden** pet. They do **not** launch Pet Grok if it is not already running.
 
 `GET http://127.0.0.1:7788/health` → JSON `{ "ok": true, "lastState": "...", "pid": ... }`
 

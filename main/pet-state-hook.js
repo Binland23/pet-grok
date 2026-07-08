@@ -115,43 +115,59 @@ function startPost() {
     /* ignore */
   }
 
-  const body = state;
-  const req = http.request(
-    {
-      host: '127.0.0.1',
-      port: 7788,
-      path: '/state',
-      method: 'POST',
-      headers: {
-        'Content-Type': 'text/plain',
-        'Content-Length': Buffer.byteLength(body),
-      },
-      timeout: 4000,
-    },
-    (res) => {
-      res.resume();
-      res.on('end', () => {
-        dbg('ok status=' + res.statusCode + ' state=' + state);
-        process.exit(res.statusCode === 200 ? 0 : 1);
+  /**
+   * POST plain text to a path; resolve with status or 0 on network error (fail-open).
+   * @param {string} pathName
+   * @param {string} bodyText
+   */
+  function post(pathName, bodyText) {
+    return new Promise((resolve) => {
+      const bodyBuf = Buffer.from(bodyText || '', 'utf8');
+      const req = http.request(
+        {
+          host: '127.0.0.1',
+          port: 7788,
+          path: pathName,
+          method: 'POST',
+          headers: {
+            'Content-Type': 'text/plain',
+            'Content-Length': bodyBuf.length,
+          },
+          timeout: 4000,
+        },
+        (res) => {
+          res.resume();
+          res.on('end', () => resolve(res.statusCode || 0));
+        }
+      );
+      req.on('error', (e) => {
+        dbg('request error ' + pathName + ' ' + (e && e.message));
+        resolve(0);
       });
-    }
-  );
+      req.on('timeout', () => {
+        dbg('timeout ' + pathName + ' state=' + state);
+        try {
+          req.destroy();
+        } catch {
+          /* ignore */
+        }
+        resolve(0);
+      });
+      req.end(bodyBuf);
+    });
+  }
 
-  req.on('error', (e) => {
-    dbg('request error ' + (e && e.message));
-    // Fail-open: do not break Grok if the pet app is not running
-    process.exit(0);
-  });
-  req.on('timeout', () => {
-    dbg('timeout state=' + state);
-    try {
-      req.destroy();
-    } catch {
-      /* ignore */
+  (async () => {
+    const status = await post('/state', state);
+    dbg('ok status=' + status + ' state=' + state);
+    // SessionStart → wake: also hit /show so a running-but-hidden pet reappears
+    if (state === 'wake') {
+      const showStatus = await post('/show', '');
+      dbg('show status=' + showStatus);
     }
+    // Fail-open: exit 0 even if pet app is not running
     process.exit(0);
-  });
-  req.end(body);
+  })();
 }
 
 // If state already known from argv/env, post immediately; else wait briefly for stdin
