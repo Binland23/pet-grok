@@ -68,7 +68,7 @@ Pick any pet from **Dashboard → Pet** or **tray / right-click → Pet**.
 | `cloud-pup` | Cloud Pup | Fluffy cloud puppy |
 | `bubble-axolotl` | Bubble Axolotl | Pastel pink axolotl + bubbles |
 | `matcha-frog` | Matcha Frog | Leaf-hat tea-shop frog |
-| `snorlax-buddy` | Snorlax Buddy | Teal doze-buddy, cream belly (Snorlax-inspired) |
+| `doze-buddy` | Doze Buddy | Sleepy teal companion with a cream belly |
 
 Each pet includes: **idle**, **thinking**, **working**, **done**, **alert**, **sleep**, **wake**, and **click**.
 
@@ -144,7 +144,7 @@ If Pet Grok is **already running** but **hidden**, starting a Grok session posts
 
 | Area | What landed |
 |------|-------------|
-| Multi-pet | Cloud Pup, Bubble Axolotl, Matcha Frog, Snorlax Buddy + Hermit Crab working refresh |
+| Multi-pet | Cloud Pup, Bubble Axolotl, Matcha Frog, Doze Buddy + Hermit Crab working refresh |
 | Hooks | Command-mode absolute paths; SSRF-safe; SessionStart show |
 | Dashboard | Pet picker, size, mute, hooks, status |
 | Interaction | Click focus Grok + WEEEE; idle bounce; SFX; laptop working |

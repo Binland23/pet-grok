@@ -1,11 +1,14 @@
 {
   "name": "pet-grok",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Always-on-top desktop pet for Grok Build CLI — multi-theme kawaii companion",
   "main": "main/main.js",
   "scripts": {
     "start": "electron .",
     "test": "node --test test/**/*.test.js",
+    "dist": "electron-builder",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win",
     "install-hooks": "node -e \"require('./main/hooks').installHooks()\"",
     "uninstall-hooks": "node -e \"require('./main/hooks').uninstallHooks()\""
   },
@@ -15,9 +18,66 @@
     "grok",
     "grok-build"
   ],
-  "author": "",
+  "author": "Binland23",
   "license": "MIT",
   "devDependencies": {
-    "electron": "^33.2.0"
+    "electron": "39.8.5",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.binland23.petgrok",
+    "productName": "Pet Grok",
+    "copyright": "Copyright © 2026 Binland23",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main/**/*",
+      "preload/**/*",
+      "renderer/**/*",
+      "themes/**/*",
+      "assets/icons/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "icon": "build/icon.png",
+      "identity": null,
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "Pet-Grok-${version}-macOS-${arch}.${ext}"
+    },
+    "win": {
+      "icon": "assets/icons/tray.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "Pet-Grok-Setup-${version}-Windows-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
   }
 }

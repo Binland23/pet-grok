@@ -13,7 +13,7 @@ const SHIPPED_THEMES = [
   { id: 'cloud-pup', name: 'Cloud Pup' },
   { id: 'bubble-axolotl', name: 'Bubble Axolotl' },
   { id: 'matcha-frog', name: 'Matcha Frog' },
-  { id: 'snorlax-buddy', name: 'Snorlax Buddy' },
+  { id: 'doze-buddy', name: 'Doze Buddy' },
 ];
 
 describe('themes module (shipped listThemes / paths)', () => {
