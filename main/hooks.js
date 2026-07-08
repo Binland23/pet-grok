@@ -3,11 +3,16 @@
 /**
  * Install / uninstall Grok global hooks for Pet Grok.
  *
- * Default path (macOS + Windows): type "http" → POST event JSON to
- * http://127.0.0.1:7788/hook. Grok's native HTTP runner maps lifecycle
- * events without spawning shell/node — more reliable than quoted command lines.
+ * Default path (macOS + Windows): type "command" with absolute node + pet-state.js
+ * (same shape as Clawd-on-Desk hooks that Grok already loads from ~/.claude/settings.json).
  *
- * Optional command / curl modes remain for tests and manual fallbacks.
+ * Why not type "http" to localhost? Grok's HTTP hook runner SSRF-blocks private/loopback
+ * IPs, so http://127.0.0.1:7788 never fires.
+ *
+ * Why absolute paths? Relative "./pet-run.sh" is easy for the harness to skip/fail at load
+ * or spawn; Clawd uses absolute quoted node + script and those show up in /hooks.
+ *
+ * Optional mode: "http" | "curl" | "command" remain for tests.
  */
 
 const fs = require('fs');
@@ -37,6 +42,15 @@ const EVENT_STATE_MAP = {
   SessionEnd: 'sleep',
 };
 
+/** Events where matcher is meaningful (tool / notification filters). */
+const TOOLISH_EVENTS = new Set([
+  'PreToolUse',
+  'PostToolUse',
+  'PostToolUseFailure',
+  'PermissionDenied',
+  'Notification',
+]);
+
 /**
  * Resolve a node executable. When install runs inside Electron, process.execPath
  * is Electron — so prefer `node` on PATH.
@@ -46,7 +60,27 @@ function resolveNodeBinary(opts = {}) {
   const platform = opts.platform || process.platform;
   const base = path.basename(process.execPath).toLowerCase();
   if (base === 'node' || base === 'node.exe') {
+    // Prefer stable brew symlinks over versioned Cellar paths (survive upgrades)
+    if (platform !== 'win32') {
+      for (const candidate of ['/opt/homebrew/bin/node', '/usr/local/bin/node']) {
+        try {
+          if (fs.existsSync(candidate)) return candidate;
+        } catch {
+          /* ignore */
+        }
+      }
+    }
     return process.execPath;
+  }
+  // Prefer stable Homebrew shims first (not Cellar versioned paths)
+  if (platform !== 'win32') {
+    for (const candidate of ['/opt/homebrew/bin/node', '/usr/local/bin/node']) {
+      try {
+        if (fs.existsSync(candidate)) return candidate;
+      } catch {
+        /* ignore */
+      }
+    }
   }
   try {
     if (platform === 'win32') {
@@ -79,8 +113,8 @@ function quoteForShell(p, platform = process.platform) {
 }
 
 /**
- * Build a shell/cmd command for a fixed pet state (command mode / curl mode).
- * Prefer relative runners next to pet.json so Grok resolves them without quoting.
+ * Build a command Grok can spawn reliably.
+ * Prefer absolute node + absolute pet-state.js (Clawd-compatible).
  * @param {string} state
  * @param {{
  *   nodeBin?: string,
@@ -88,6 +122,7 @@ function quoteForShell(p, platform = process.platform) {
  *   runnerPath?: string,
  *   shRunnerPath?: string,
  *   platform?: string,
+ *   relative?: boolean,
  * }} [opts]
  */
 function stateCommand(state, opts = {}) {
@@ -97,20 +132,24 @@ function stateCommand(state, opts = {}) {
   const runnerPath = opts.runnerPath || HOOK_RUNNER;
   const shRunnerPath = opts.shRunnerPath || HOOK_SH_RUNNER;
 
-  if (platform === 'win32') {
-    // Relative name when installed next to pet.json — Grok resolves vs hook file dir
-    const base = path.basename(runnerPath);
-    if (runnerPath === HOOK_RUNNER || base === 'pet-run.cmd') {
+  // Explicit relative mode (tests / advanced)
+  if (opts.relative) {
+    if (platform === 'win32') {
       return `pet-run.cmd ${state}`;
     }
-    return `${quoteForShell(runnerPath, platform)} ${state}`;
-  }
-
-  // macOS/Linux: relative shell runner (executable next to pet.json)
-  const shBase = path.basename(shRunnerPath);
-  if (shRunnerPath === HOOK_SH_RUNNER || shBase === 'pet-run.sh') {
     return `./pet-run.sh ${state}`;
   }
+
+  // Windows: absolute node + script (same as Clawd style)
+  if (platform === 'win32') {
+    // Prefer absolute if the runner exists; otherwise node+script
+    if (fs.existsSync(runnerPath) || path.basename(runnerPath) === 'pet-run.cmd') {
+      // Still use node+script — more reliable than cmd relative resolution
+    }
+    return `${quoteForShell(nodeBin, platform)} ${quoteForShell(scriptPath, platform)} ${state}`;
+  }
+
+  // macOS/Linux: absolute quoted node + absolute script (matches Clawd-on-Desk)
   return `${quoteForShell(nodeBin, platform)} ${quoteForShell(scriptPath, platform)} ${state}`;
 }
 
@@ -122,7 +161,8 @@ function curlStateCommand(state, opts = {}) {
 }
 
 /**
- * Default: HTTP hooks. Grok POSTs the lifecycle event envelope as JSON.
+ * Default: command hooks (absolute node → pet-state.js → state server).
+ * Shape mirrors Clawd hooks that Grok successfully loads from Claude settings.
  * @param {{
  *   forceCurl?: boolean,
  *   mode?: 'http' | 'command' | 'curl',
@@ -132,16 +172,17 @@ function curlStateCommand(state, opts = {}) {
  *   shRunnerPath?: string,
  *   platform?: string,
  *   hookUrl?: string,
+ *   relative?: boolean,
  * }} [opts]
  */
 function makeHooksPayload(opts = {}) {
-  const mode = opts.mode || (opts.forceCurl ? 'curl' : 'http');
+  const mode = opts.mode || (opts.forceCurl ? 'curl' : 'command');
   const hookUrl = opts.hookUrl || HOOK_URL;
   /** @type {Record<string, unknown>} */
   const hooks = {};
 
   for (const [event, state] of Object.entries(EVENT_STATE_MAP)) {
-    /** @type {{ type: string, command?: string, url?: string, timeout: number }} */
+    /** @type {{ type: string, command?: string, url?: string, timeout: number, async?: boolean }} */
     let handler;
     if (mode === 'http') {
       handler = {
@@ -153,16 +194,27 @@ function makeHooksPayload(opts = {}) {
       handler = {
         type: 'command',
         command: curlStateCommand(state, opts),
+        async: true,
         timeout: 5,
       };
     } else {
       handler = {
         type: 'command',
         command: stateCommand(state, opts),
+        // Non-blocking like Clawd — pet never stalls the agent turn
+        async: true,
         timeout: 5,
       };
     }
-    hooks[event] = [{ hooks: [handler] }];
+
+    /** @type {{ matcher?: string, hooks: typeof handler[] }} */
+    const group = { hooks: [handler] };
+    // Clawd uses matcher:"" on every event; empty = match all tools for tool events.
+    // Include for toolish events always; for lifecycle too (matches Clawd UI listing).
+    if (TOOLISH_EVENTS.has(event) || mode === 'command') {
+      group.matcher = '';
+    }
+    hooks[event] = [group];
   }
   return { hooks };
 }
@@ -178,11 +230,12 @@ function isInstalled() {
  */
 function installHookScript(opts = {}) {
   const platform = opts.platform || process.platform;
+  const nodeBin = opts.nodeBin || resolveNodeBinary({ platform });
   fs.mkdirSync(HOOKS_DIR, { recursive: true });
   const src = fs.readFileSync(BUNDLED_SCRIPT, 'utf8');
   fs.writeFileSync(HOOK_SCRIPT, src, 'utf8');
 
-  // Unix shell runner (relative command for command-mode fallback)
+  // Unix shell runner (manual / relative fallback)
   const shBody = [
     '#!/bin/sh',
     '# Pet Grok helper — invoked as: ./pet-run.sh <state>',
@@ -192,7 +245,11 @@ function installHookScript(opts = {}) {
     '  echo "usage: pet-run.sh <state>" >&2',
     '  exit 2',
     'fi',
-    'exec /usr/bin/env node "$DIR/pet-state.js" "$STATE"',
+    // Prefer absolute node when available
+    `NODE_BIN="${String(nodeBin).replace(/"/g, '\\"')}"`,
+    'if [ ! -x "$NODE_BIN" ]; then NODE_BIN="$(command -v node 2>/dev/null || true)"; fi',
+    'if [ -z "$NODE_BIN" ]; then NODE_BIN="node"; fi',
+    'exec "$NODE_BIN" "$DIR/pet-state.js" "$STATE"',
     '',
   ].join('\n');
   fs.writeFileSync(HOOK_SH_RUNNER, shBody, { encoding: 'utf8', mode: 0o755 });
@@ -203,7 +260,6 @@ function installHookScript(opts = {}) {
   }
 
   if (platform === 'win32') {
-    const nodeBin = opts.nodeBin || resolveNodeBinary({ platform });
     const cmdBody = [
       '@echo off',
       'setlocal',
@@ -232,9 +288,8 @@ function installHooks(opts = {}) {
   fs.mkdirSync(HOOKS_DIR, { recursive: true });
   const nodeBin = opts.nodeBin || resolveNodeBinary({ platform });
   installHookScript({ platform, nodeBin });
-  // Default HTTP — works on macOS and Windows without shell spawn issues
   const payload = makeHooksPayload({
-    mode: opts.mode || 'http',
+    mode: opts.mode || 'command',
     nodeBin,
     scriptPath: HOOK_SCRIPT,
     runnerPath: HOOK_RUNNER,

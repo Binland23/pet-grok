@@ -1,6 +1,8 @@
 # Pet Grok
 
-An always-on-top desktop pet for the **Grok Build** CLI. A pixel-art F1 / Max Verstappen **race engineer crab** that reacts in real time to agent lifecycle events (thinking → working → done).
+An always-on-top desktop pet for the **Grok Build** CLI. Cute kawaii pets that react in real time to agent lifecycle events (thinking → working → done).
+
+Shipped themes: **Race Engineer Crab**, **Cloud Pup**, **Bubble Axolotl**, and **Matcha Frog** — pick from the dashboard.
 
 Inspired by clawd-on-desk and Codex Pets.
 
@@ -43,8 +45,8 @@ On first launch the app:
 
 ```
 Grok lifecycle event
-  → ~/.grok/hooks/pet.json  (type: http)
-  → POST http://127.0.0.1:7788/hook  (event JSON envelope)
+  → ~/.grok/hooks/pet.json  (type: command, absolute node + pet-state.js <state>)
+  → POST http://127.0.0.1:7788/state  (plain text)
   → Electron main onState → IPC
   → Pet renderer animation
 ```
@@ -55,7 +57,7 @@ Grok lifecycle event
 |--------------------|------------|-----------------------------------|
 | `SessionStart`     | `wake`     | Stretch awake → idle              |
 | `UserPromptSubmit` | `thinking` | Head tilt, radio chatter          |
-| `PreToolUse`       | `working`  | Claw hammering                    |
+| `PreToolUse`       | `working`  | Laptop typing (vigorous)          |
 | `Stop`             | `done`     | Celebrate briefly → idle          |
 | `Notification`     | `alert`    | Shake / red radio                 |
 | `SessionEnd`       | `sleep`    | Zzz                               |
@@ -101,39 +103,23 @@ npm run uninstall-hooks
 
 ### Generated `~/.grok/hooks/pet.json`
 
-Hooks use Grok’s native **`type: "http"`** runner (macOS and Windows). Grok POSTs the lifecycle event envelope as JSON to the pet’s local server; the server maps `hookEventName` → pet state (`thinking` / `working` / `done` / …).
+Hooks use Grok’s **`type: "command"`** runner (macOS and Windows), with **absolute** `node` + `pet-state.js` paths (same shape as Clawd-on-Desk hooks that Grok loads from `~/.claude/settings.json`). Each event POSTs plain text to `http://127.0.0.1:7788/state`.
+
+**Why not `type: "http"` to localhost?** Grok’s HTTP hook runner **SSRF-blocks** private/loopback IPs.
+
+**Why absolute paths?** Relative `./pet-run.sh` often fails to show up or spawn reliably; Clawd-style absolute commands appear under `/hooks` as Global.
 
 ```json
 {
   "hooks": {
     "UserPromptSubmit": [
       {
+        "matcher": "",
         "hooks": [
           {
-            "type": "http",
-            "url": "http://127.0.0.1:7788/hook",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "hooks": [
-          {
-            "type": "http",
-            "url": "http://127.0.0.1:7788/hook",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "http",
-            "url": "http://127.0.0.1:7788/hook",
+            "type": "command",
+            "command": "\"/opt/homebrew/bin/node\" \"/Users/you/.grok/hooks/pet-state.js\" thinking",
+            "async": true,
             "timeout": 5
           }
         ]
@@ -143,7 +129,9 @@ Hooks use Grok’s native **`type: "http"`** runner (macOS and Windows). Grok PO
 }
 ```
 
-Helper scripts (`pet-state.js`, `pet-run.sh` / `pet-run.cmd`) are still installed for manual debugging; the default path does not require shelling out to Node.
+Installed under `~/.grok/hooks/`: `pet.json`, `pet-state.js`, `pet-run.sh` / `pet-run.cmd` (helpers).
+
+After install or refresh: open **`/hooks`** in the TUI and press **`r`** to reload. You should see Pet Grok commands under **Global** alongside any Claude/Clawd hooks.
 
 After installing, start (or reload hooks in) a Grok session — press **`r`** in the `/hooks` modal if the session was already open. Use `/hooks` in the TUI to confirm `pet.json` is loaded. Global hooks under `~/.grok/hooks/` (Windows: `%USERPROFILE%\.grok\hooks\`) are always trusted.
 
@@ -155,8 +143,9 @@ After installing, start (or reload hooks in) a Grok session — press **`r`** in
 |------|--------|
 | **Open Dashboard…** | Settings window (pets, size, hooks, live status) |
 | Show / Hide Pet | Toggle overlay visibility |
+| Pet | Switch theme (Race Crab / Cloud Pup / Bubble Axolotl / Matcha Frog) |
 | Size (S / M / L) | 128 / 192 / 256 px window |
-| Mute | Reserved for optional sounds |
+| Mute | Toggle WEEEE + done celebration SFX |
 | Install / Uninstall Grok Hooks | Manage `pet.json` only |
 | Quit | Exit the app |
 
@@ -169,7 +158,7 @@ Open from the tray or pet context menu (**Open Dashboard…**). From there you c
 - See live server / hook / pet state
 - Change size, visibility, mute
 - Install or refresh Grok hooks
-- Choose a **pet** (themes under `themes/<id>/` — more pets appear automatically later)
+- Choose a **pet** (Race Crab, Cloud Pup, Bubble Axolotl, Matcha Frog — drop more under `themes/<id>/` and they appear automatically)
 
 
 Other behavior:
@@ -182,25 +171,32 @@ Other behavior:
 
 ## Custom themes
 
-Themes live under `themes/<id>/`.
+Themes live under `themes/<id>/` with matching runtime frames in `renderer/assets/<id>/`.
 
-Default theme: `themes/race-crab/theme.json`
+Shipped:
+
+| Id | Name |
+|----|------|
+| `race-crab` | Race Engineer Crab (default) |
+| `cloud-pup` | Cloud Pup |
+| `bubble-axolotl` | Bubble Axolotl |
+| `matcha-frog` | Matcha Frog |
+
+Pick pets from the **Dashboard → Pet** cards or the tray **Pet** menu.
 
 ```json
 {
-  "id": "race-crab",
-  "name": "Race Engineer Crab",
-  "palette": {
-    "shell": "#1e3a5f",
-    "shellDark": "#0f2438",
-    "accent": "#e10600",
-    "highlight": "#ffd200",
-    "eye": "#ffffff",
-    "pupil": "#111111",
-    "belly": "#c45c26",
-    "claw": "#e10600",
-    "radio": "#33ff66",
-    "zzz": "#a8c0d8"
+  "id": "cloud-pup",
+  "name": "Cloud Pup",
+  "description": "Fluffy cloud puppy…",
+  "sprites": {
+    "idle": "sprites/idle.png",
+    "thinking": "sprites/thinking.png",
+    "working": "sprites/working.png",
+    "done": "sprites/done.png",
+    "alert": "sprites/alert.png",
+    "sleep": "sprites/sleep.png",
+    "wake": "sprites/wake.png"
   },
   "celebrateMs": 2500,
   "wakeMs": 900,
@@ -210,12 +206,12 @@ Default theme: `themes/race-crab/theme.json`
 
 ### Adding a theme
 
-1. Copy `themes/race-crab/` to `themes/my-theme/`.
-2. Edit `theme.json` (`id`, `name`, `palette`, timings).
-3. For real art later, replace the CSS/DOM sprites in `renderer/index.html` (or load sprite sheets from `themes/my-theme/` via data-URIs / file URLs). Keep state class names: `state-idle`, `state-thinking`, `state-working`, `state-done`, `state-alert`, `state-sleep`, `state-wake`.
-4. Set `"themeId": "my-theme"` in the app prefs file (under Electron `userData`, e.g. `pet-prefs.json`), or change the default in `main/prefs.js`.
+1. Create `themes/<id>/theme.json` and `themes/<id>/sprites/` (hero PNGs per state).
+2. Put animation frames + `animations.json` under `renderer/assets/<id>/` (see existing pets).
+3. Optional helper: `python3 scripts/process_theme_poses.py <id> <src-pose-dir>` turns pose JPGs into transparent frames.
+4. Restart the app — the dashboard lists any folder under `themes/`.
 
-The pet view is a **single** `renderer/index.html` that loads theme sprites from `themes/<id>/sprites/` (transparent PNGs per state: idle, thinking, working, done, alert, sleep, wake). Drop in new art and update `theme.json` to swap looks.
+States: `idle`, `thinking`, `working`, `done`, `alert`, `sleep`, `wake` (plus optional `click`).
 
 ## Project layout
 
@@ -239,11 +235,19 @@ The pet view is a **single** `renderer/index.html` that loads theme sprites from
 │   └── dashboard-preload.js
 ├── renderer/
 │   ├── index.html        # pet UI + animations
-│   └── dashboard.html    # settings dashboard
-
+│   ├── dashboard.html    # settings dashboard
+│   └── assets/
+│       ├── race-crab/
+│       ├── cloud-pup/
+│       ├── bubble-axolotl/
+│       └── matcha-frog/
+├── scripts/
+│   └── process_theme_poses.py
 └── themes/
-    └── race-crab/
-        └── theme.json
+    ├── race-crab/
+    ├── cloud-pup/
+    ├── bubble-axolotl/
+    └── matcha-frog/
 ```
 
 ## Platform notes

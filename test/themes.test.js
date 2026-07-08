@@ -7,34 +7,54 @@ const path = require('node:path');
 
 const themes = require('../main/themes');
 
+const REQUIRED_STATES = ['idle', 'thinking', 'working', 'done', 'alert', 'sleep', 'wake'];
+const SHIPPED_THEMES = [
+  { id: 'race-crab', name: 'Race Engineer Crab' },
+  { id: 'cloud-pup', name: 'Cloud Pup' },
+  { id: 'bubble-axolotl', name: 'Bubble Axolotl' },
+  { id: 'matcha-frog', name: 'Matcha Frog' },
+];
+
 describe('themes module (shipped listThemes / paths)', () => {
-  it('lists race-crab theme from themes/ on disk', () => {
+  it('lists all shipped themes from themes/ on disk', () => {
     const list = themes.listThemes();
     assert.ok(Array.isArray(list));
-    assert.ok(list.length >= 1, 'expected at least one theme');
-    const crab = list.find((t) => t.id === 'race-crab');
-    assert.ok(crab, 'race-crab must be discoverable');
-    assert.equal(typeof crab.name, 'string');
-    assert.ok(crab.name.length > 0);
+    assert.ok(list.length >= SHIPPED_THEMES.length, 'expected all shipped themes');
+    for (const expected of SHIPPED_THEMES) {
+      const t = list.find((x) => x.id === expected.id);
+      assert.ok(t, `${expected.id} must be discoverable`);
+      assert.equal(typeof t.name, 'string');
+      assert.ok(t.name.length > 0);
+      assert.ok(t.preview, `${expected.id} should have a preview path`);
+      assert.ok(fs.existsSync(t.preview), t.preview);
+    }
   });
 
-  it('loadThemeJson reads theme.json for race-crab', () => {
-    const meta = themes.loadThemeJson('race-crab');
-    assert.ok(meta);
-    assert.equal(meta.id, 'race-crab');
-    assert.ok(meta.name);
-  });
+  for (const expected of SHIPPED_THEMES) {
+    it(`loadThemeJson reads theme.json for ${expected.id}`, () => {
+      const meta = themes.loadThemeJson(expected.id);
+      assert.ok(meta);
+      assert.equal(meta.id, expected.id);
+      assert.equal(meta.name, expected.name);
+    });
 
-  it('themeAnimationsPath points at an existing animations.json', () => {
-    const p = themes.themeAnimationsPath('race-crab');
-    assert.ok(fs.existsSync(p), p);
-    const j = JSON.parse(fs.readFileSync(p, 'utf8'));
-    assert.ok(j.animations);
-  });
-
-  it('themeAssetAbs resolves a known frame path', () => {
-    const abs = themes.themeAssetAbs('race-crab', 'frames/idle_00.png');
-    assert.ok(fs.existsSync(abs), abs);
-    assert.equal(path.basename(abs), 'idle_00.png');
-  });
+    it(`themeAnimationsPath + assets for ${expected.id}`, () => {
+      const p = themes.themeAnimationsPath(expected.id);
+      assert.ok(fs.existsSync(p), p);
+      const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+      assert.ok(j.animations);
+      for (const state of REQUIRED_STATES) {
+        assert.ok(j.animations[state], `${expected.id} missing anim ${state}`);
+        assert.ok(
+          Array.isArray(j.animations[state].frames) && j.animations[state].frames.length > 0,
+          `${expected.id} ${state} has no frames`
+        );
+        const first = j.animations[state].frames[0];
+        const abs = themes.themeAssetAbs(expected.id, first);
+        assert.ok(fs.existsSync(abs), abs);
+      }
+      const idleAbs = themes.themeAssetAbs(expected.id, 'frames/idle_00.png');
+      assert.ok(fs.existsSync(idleAbs), idleAbs);
+    });
+  }
 });

@@ -280,6 +280,15 @@ function buildAppMenu() {
     },
     { type: 'separator' },
     {
+      label: 'Pet',
+      submenu: themes.listThemes().map((t) => ({
+        label: t.name || t.id,
+        type: 'radio',
+        checked: (s.themeId || 'race-crab') === t.id,
+        click: () => applySettingsPatch({ themeId: t.id }),
+      })),
+    },
+    {
       label: 'Size',
       submenu: ['S', 'M', 'L'].map((key) => ({
         label: key === 'S' ? 'Small' : key === 'M' ? 'Medium' : 'Large',

@@ -104,7 +104,7 @@ function postGrokHttpHook(port, hookEventName) {
 }
 
 describe('hooks payload (real makeHooksPayload)', () => {
-  it('default payload uses type http to localhost /hook for lifecycle events', () => {
+  it('default payload uses type command (loopback HTTP is SSRF-blocked by Grok)', () => {
     const payload = hooks.makeHooksPayload();
     assert.ok(payload.hooks.UserPromptSubmit);
     assert.ok(payload.hooks.PreToolUse);
@@ -113,10 +113,22 @@ describe('hooks payload (real makeHooksPayload)', () => {
     const handlerOf = (event) => payload.hooks[event][0].hooks[0];
     for (const event of ['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop']) {
       const h = handlerOf(event);
-      assert.equal(h.type, 'http', `${event} must be http`);
-      assert.match(h.url, /127\.0\.0\.1:7788\/hook/);
+      assert.equal(h.type, 'command', `${event} must be command (not http to 127.0.0.1)`);
+      assert.equal(typeof h.command, 'string');
+      assert.ok(h.command.length > 0, `${event} needs a command`);
       assert.equal(h.timeout, 5);
     }
+    // Fixed states embedded in commands so pet-state.js does not need the envelope
+    assert.match(handlerOf('UserPromptSubmit').command, /thinking/);
+    assert.match(handlerOf('PreToolUse').command, /working/);
+    assert.match(handlerOf('Stop').command, /done/);
+  });
+
+  it('http mode still builds a localhost /hook URL when explicitly requested', () => {
+    const payload = hooks.makeHooksPayload({ mode: 'http' });
+    const h = payload.hooks.UserPromptSubmit[0].hooks[0];
+    assert.equal(h.type, 'http');
+    assert.match(h.url, /127\.0\.0\.1:7788\/hook/);
   });
 
   it('maps events in EVENT_STATE_MAP for thinking/working/done', () => {
@@ -126,18 +138,39 @@ describe('hooks payload (real makeHooksPayload)', () => {
     assert.equal(map.Stop, 'done');
   });
 
-  it('command mode generates win32 pet-run.cmd and darwin pet-run.sh', () => {
-    const win = hooks.makeHooksPayload({ mode: 'command', platform: 'win32' });
+  it('command mode uses absolute node + pet-state.js (Clawd-compatible)', () => {
+    const win = hooks.makeHooksPayload({
+      mode: 'command',
+      platform: 'win32',
+      nodeBin: 'C:\\\\Program Files\\\\nodejs\\\\node.exe',
+      scriptPath: 'C:\\\\Users\\\\x\\\\.grok\\\\hooks\\\\pet-state.js',
+    });
     const winCmd = win.hooks.UserPromptSubmit[0].hooks[0];
     assert.equal(winCmd.type, 'command');
-    assert.match(winCmd.command, /pet-run\.cmd/);
+    assert.equal(winCmd.async, true);
+    assert.match(winCmd.command, /node\.exe/i);
+    assert.match(winCmd.command, /pet-state\.js/);
     assert.match(winCmd.command, /thinking/);
 
-    const mac = hooks.makeHooksPayload({ mode: 'command', platform: 'darwin' });
+    const mac = hooks.makeHooksPayload({
+      mode: 'command',
+      platform: 'darwin',
+      nodeBin: '/opt/homebrew/bin/node',
+      scriptPath: '/Users/x/.grok/hooks/pet-state.js',
+    });
     const macCmd = mac.hooks.PreToolUse[0].hooks[0];
     assert.equal(macCmd.type, 'command');
-    assert.match(macCmd.command, /pet-run\.sh/);
+    assert.equal(macCmd.async, true);
+    assert.match(macCmd.command, /\/opt\/homebrew\/bin\/node|node/);
+    assert.match(macCmd.command, /pet-state\.js/);
     assert.match(macCmd.command, /working/);
+    // Tool events get empty matcher (match all) like Clawd
+    assert.equal(mac.hooks.PreToolUse[0].matcher, '');
+  });
+
+  it('relative command mode still available for tests', () => {
+    const mac = hooks.makeHooksPayload({ mode: 'command', platform: 'darwin', relative: true });
+    assert.match(mac.hooks.PreToolUse[0].hooks[0].command, /pet-run\.sh/);
   });
 
   it('forceCurl uses curl.exe on win32 and curl elsewhere', () => {
@@ -145,7 +178,7 @@ describe('hooks payload (real makeHooksPayload)', () => {
     assert.match(hooks.curlStateCommand('done', { platform: 'darwin' }), /^curl /);
   });
 
-  it('installHooks writes pet.json with http handlers + helper scripts', () => {
+  it('installHooks writes pet.json with command handlers + helper scripts', () => {
     const prev = hooks.isInstalled() ? fs.readFileSync(hooks.HOOK_FILE, 'utf8') : null;
     const prevScript = fs.existsSync(hooks.HOOK_SCRIPT)
       ? fs.readFileSync(hooks.HOOK_SCRIPT, 'utf8')
@@ -157,8 +190,12 @@ describe('hooks payload (real makeHooksPayload)', () => {
       assert.ok(fs.existsSync(hooks.HOOK_SH_RUNNER), 'pet-run.sh must be installed');
       const written = JSON.parse(fs.readFileSync(p, 'utf8'));
       const h = written.hooks.UserPromptSubmit[0].hooks[0];
-      assert.equal(h.type, 'http');
-      assert.match(h.url, /127\.0\.0\.1:7788\/hook/);
+      assert.equal(h.type, 'command');
+      assert.equal(h.async, true);
+      assert.match(String(h.command), /pet-state\.js/);
+      assert.match(String(h.command), /thinking/);
+      // Absolute path — not relative ./pet-run.sh
+      assert.doesNotMatch(String(h.command), /^\.\/pet-run/);
       assert.ok(written.hooks.PreToolUse);
       assert.ok(written.hooks.Stop);
     } finally {

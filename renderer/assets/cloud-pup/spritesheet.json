@@ -1,0 +1,48 @@
+{
+  "frameWidth": 256,
+  "frameHeight": 256,
+  "rows": {
+    "idle": {
+      "row": 0,
+      "count": 4,
+      "fps": 3,
+      "loop": true
+    },
+    "thinking": {
+      "row": 1,
+      "count": 4,
+      "fps": 2.5,
+      "loop": true
+    },
+    "working": {
+      "row": 2,
+      "count": 6,
+      "fps": 4,
+      "loop": true
+    },
+    "done": {
+      "row": 3,
+      "count": 6,
+      "fps": 6,
+      "loop": false
+    },
+    "alert": {
+      "row": 4,
+      "count": 3,
+      "fps": 4,
+      "loop": true
+    },
+    "sleep": {
+      "row": 5,
+      "count": 4,
+      "fps": 1.5,
+      "loop": true
+    },
+    "wake": {
+      "row": 6,
+      "count": 3,
+      "fps": 5,
+      "loop": false
+    }
+  }
+}

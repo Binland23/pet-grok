@@ -97,15 +97,17 @@ describe('focus-terminal (shipped helpers)', () => {
 });
 
 describe('click animation asset (shipped animations.json)', () => {
-  it('defines a click sequence for race-crab', () => {
-    const p = path.join(__dirname, '..', 'renderer', 'assets', 'race-crab', 'animations.json');
-    const j = JSON.parse(fs.readFileSync(p, 'utf8'));
-    assert.ok(j.animations.click, 'click animation required');
-    assert.ok(Array.isArray(j.animations.click.frames));
-    assert.ok(j.animations.click.frames.length >= 2);
-    for (const rel of j.animations.click.frames) {
-      const abs = path.join(__dirname, '..', 'renderer', 'assets', 'race-crab', rel);
-      assert.ok(fs.existsSync(abs), 'missing frame ' + rel);
-    }
-  });
+  for (const themeId of ['race-crab', 'cloud-pup', 'bubble-axolotl', 'matcha-frog']) {
+    it(`defines a click sequence for ${themeId}`, () => {
+      const p = path.join(__dirname, '..', 'renderer', 'assets', themeId, 'animations.json');
+      const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+      assert.ok(j.animations.click, 'click animation required');
+      assert.ok(Array.isArray(j.animations.click.frames));
+      assert.ok(j.animations.click.frames.length >= 2);
+      for (const rel of j.animations.click.frames) {
+        const abs = path.join(__dirname, '..', 'renderer', 'assets', themeId, rel);
+        assert.ok(fs.existsSync(abs), 'missing frame ' + rel);
+      }
+    });
+  }
 });

@@ -1,0 +1,17 @@
+{
+  "id": "bubble-axolotl",
+  "name": "Bubble Axolotl",
+  "description": "Pastel pink axolotl with petal gills and bubbles — pure kawaii vibes",
+  "sprites": {
+    "idle": "sprites/idle.png",
+    "thinking": "sprites/thinking.png",
+    "working": "sprites/working.png",
+    "done": "sprites/done.png",
+    "alert": "sprites/alert.png",
+    "sleep": "sprites/sleep.png",
+    "wake": "sprites/wake.png"
+  },
+  "celebrateMs": 2500,
+  "wakeMs": 900,
+  "idleTimeoutMs": 60000
+}

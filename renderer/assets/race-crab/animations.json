@@ -23,9 +23,14 @@
       "frames": [
         "frames/working_00.png",
         "frames/working_01.png",
-        "frames/working_02.png"
+        "frames/working_02.png",
+        "frames/working_03.png",
+        "frames/working_04.png",
+        "frames/working_05.png",
+        "frames/working_06.png",
+        "frames/working_07.png"
       ],
-      "fps": 4,
+      "fps": 8,
       "loop": true
     },
     "done": {

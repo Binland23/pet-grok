@@ -3,9 +3,12 @@
  * Grok command-hook helper. Installed to ~/.grok/hooks/pet-state.js
  * Usage: node pet-state.js <state>
  *
- * - Ignores stdin (Grok sends event JSON on stdin; we must not block on it)
+ * - Drains stdin (Grok sends event JSON; we must not block on it)
  * - POSTs plain-text state to 127.0.0.1:7788/state
+ * - Prints {"decision":"allow"} for PreToolUse so blocking hooks stay green
  * - Exits 0 on HTTP 200 so hooks stay fail-open cleanly
+ *
+ * Prefer this over type:"http" to localhost — Grok SSRF-blocks loopback HTTP hooks.
  */
 const http = require('http');
 const fs = require('fs');
@@ -18,7 +21,14 @@ function dbg(msg) {
   try {
     fs.appendFileSync(
       DEBUG_LOG,
-      new Date().toISOString() + ' ' + msg + ' argv=' + JSON.stringify(process.argv) + '\n',
+      new Date().toISOString() +
+        ' ' +
+        msg +
+        ' argv=' +
+        JSON.stringify(process.argv) +
+        ' GROK_HOOK_EVENT=' +
+        String(process.env.GROK_HOOK_EVENT || '') +
+        '\n',
       'utf8'
     );
   } catch {
@@ -27,8 +37,7 @@ function dbg(msg) {
 }
 
 /**
- * Resolve pet state from argv, or from Grok's GROK_HOOK_EVENT when spawned
- * without an explicit state (HTTP is preferred; this is command fallback).
+ * Resolve pet state from argv, GROK_HOOK_EVENT, or stdin envelope.
  */
 function stateFromHookEvent(ev) {
   if (!ev) return '';
@@ -41,6 +50,8 @@ function stateFromHookEvent(ev) {
     session_start: 'wake',
     userpromptsubmit: 'thinking',
     user_prompt_submit: 'thinking',
+    beforesubmitprompt: 'thinking',
+    before_submit_prompt: 'thinking',
     pretooluse: 'working',
     pre_tool_use: 'working',
     posttooluse: 'working',
@@ -48,9 +59,15 @@ function stateFromHookEvent(ev) {
     posttoolusefailure: 'alert',
     post_tool_use_failure: 'alert',
     stop: 'done',
+    stopfailure: 'alert',
+    stop_failure: 'alert',
     notification: 'alert',
     sessionend: 'sleep',
     session_end: 'sleep',
+    subagentstart: 'working',
+    subagent_start: 'working',
+    subagentstop: 'working',
+    subagent_stop: 'working',
   };
   return map[key] || '';
 }
@@ -62,56 +79,84 @@ if (!state) {
   state = stateFromHookEvent(process.env.GROK_HOOK_EVENT || '');
 }
 
-if (!state) {
-  dbg('missing state arg and GROK_HOOK_EVENT');
-  process.stderr.write('usage: pet-state.js <state>\n');
-  process.exit(2);
-}
-
-// Drain stdin without ever waiting for EOF (Grok may keep the pipe open)
+// Drain stdin without waiting for EOF; optionally recover state from envelope
 try {
   if (process.stdin && process.stdin.readable) {
     process.stdin.resume();
-    process.stdin.on('data', () => {});
+    process.stdin.on('data', (chunk) => {
+      if (state) return;
+      try {
+        const j = JSON.parse(String(chunk));
+        const ev = j.hookEventName || j.hook_event_name || j.event || '';
+        const mapped = stateFromHookEvent(ev);
+        if (mapped) state = mapped;
+      } catch {
+        /* ignore partial/non-json */
+      }
+    });
     if (typeof process.stdin.unref === 'function') process.stdin.unref();
   }
 } catch (e) {
   dbg('stdin setup ' + e.message);
 }
 
-const body = state;
-const req = http.request(
-  {
-    host: '127.0.0.1',
-    port: 7788,
-    path: '/state',
-    method: 'POST',
-    headers: {
-      'Content-Type': 'text/plain',
-      'Content-Length': Buffer.byteLength(body),
-    },
-    timeout: 4000,
-  },
-  (res) => {
-    res.resume();
-    res.on('end', () => {
-      dbg('ok status=' + res.statusCode + ' state=' + state);
-      process.exit(res.statusCode === 200 ? 0 : 1);
-    });
+// Brief settle so a first stdin chunk can fill state when argv is missing
+function startPost() {
+  if (!state) {
+    dbg('missing state arg and GROK_HOOK_EVENT');
+    process.stderr.write('usage: pet-state.js <state>\n');
+    process.exit(2);
   }
-);
 
-req.on('error', (e) => {
-  dbg('request error ' + (e && e.message));
-  process.exit(1);
-});
-req.on('timeout', () => {
-  dbg('timeout state=' + state);
+  // PreToolUse can block; always allow so the pet never stalls the agent.
   try {
-    req.destroy();
+    process.stdout.write('{"decision":"allow"}\n');
   } catch {
     /* ignore */
   }
-  process.exit(1);
-});
-req.end(body);
+
+  const body = state;
+  const req = http.request(
+    {
+      host: '127.0.0.1',
+      port: 7788,
+      path: '/state',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain',
+        'Content-Length': Buffer.byteLength(body),
+      },
+      timeout: 4000,
+    },
+    (res) => {
+      res.resume();
+      res.on('end', () => {
+        dbg('ok status=' + res.statusCode + ' state=' + state);
+        process.exit(res.statusCode === 200 ? 0 : 1);
+      });
+    }
+  );
+
+  req.on('error', (e) => {
+    dbg('request error ' + (e && e.message));
+    // Fail-open: do not break Grok if the pet app is not running
+    process.exit(0);
+  });
+  req.on('timeout', () => {
+    dbg('timeout state=' + state);
+    try {
+      req.destroy();
+    } catch {
+      /* ignore */
+    }
+    process.exit(0);
+  });
+  req.end(body);
+}
+
+// If state already known from argv/env, post immediately; else wait briefly for stdin
+if (state) {
+  startPost();
+} else {
+  setTimeout(startPost, 50);
+}
