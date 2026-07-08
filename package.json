@@ -9,9 +9,9 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test",
-    "dist": "electron-builder",
-    "dist:mac": "electron-builder --mac",
-    "dist:win": "electron-builder --win",
+    "dist": "electron-builder --publish never",
+    "dist:mac": "electron-builder --mac --publish never",
+    "dist:win": "electron-builder --win --publish never",
     "install-hooks": "node -e \"require('./main/hooks').installHooks()\"",
     "uninstall-hooks": "node -e \"require('./main/hooks').uninstallHooks()\""
   },

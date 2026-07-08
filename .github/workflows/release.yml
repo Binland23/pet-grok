@@ -36,8 +36,6 @@ jobs:
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
     steps:
       - uses: actions/checkout@v7
-        with:
-          ref: ${{ inputs.tag || github.ref }}
       - uses: actions/setup-node@v6
         with:
           node-version: 22.12.0
