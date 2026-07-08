@@ -46,6 +46,9 @@ contextBridge.exposeInMainWorld('petAPI', {
   showContextMenu() {
     ipcRenderer.send('pet:context-menu');
   },
+  focusGrokTerminal() {
+    return ipcRenderer.invoke('pet:focus-grok-terminal');
+  },
   onThemeChanged(callback) {
     const handler = (_event, theme) => callback(theme);
     ipcRenderer.on('pet:theme-changed', handler);

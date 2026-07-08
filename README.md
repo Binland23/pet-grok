@@ -177,6 +177,7 @@ Other behavior:
 - **Single-instance lock** — only one pet process
 - **Draggable** — grab the crab; position is saved across restarts
 - **Click-through** — transparent pixels pass clicks through; only the pet hit-region captures input
+- **Click to focus Grok** — left-click the pet (without dragging) to focus the terminal tab running the active Grok session (`~/.grok/active_sessions.json`); plays a short **click** bounce animation
 - **Idle timeout** — after 60s with no events, the pet sleeps; mouse over wakes it
 
 ## Custom themes

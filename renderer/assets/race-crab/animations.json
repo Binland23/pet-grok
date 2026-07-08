@@ -60,6 +60,16 @@
       ],
       "fps": 5,
       "loop": false
+    },
+    "click": {
+      "frames": [
+        "frames/alert_00.png",
+        "frames/alert_01.png",
+        "frames/wake_00.png",
+        "frames/idle_00.png"
+      ],
+      "fps": 10,
+      "loop": false
     }
   }
 }

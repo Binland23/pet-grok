@@ -18,6 +18,7 @@ const hooks = require('./hooks');
 const { startStateServer } = require('./state-server');
 const platform = require('./platform');
 const themes = require('./themes');
+const { focusActiveGrokTerminal } = require('./focus-terminal');
 
 const IDLE_TIMEOUT_MS = 60_000;
 
@@ -608,6 +609,17 @@ function registerIpc() {
 
   ipcMain.on('pet:context-menu', () => {
     popupPetMenu();
+  });
+
+  ipcMain.handle('pet:focus-grok-terminal', async () => {
+    try {
+      const result = await focusActiveGrokTerminal();
+      console.log('[focus-grok-terminal]', result);
+      return result;
+    } catch (err) {
+      console.error('[focus-grok-terminal]', err);
+      return { ok: false, reason: err && err.message ? err.message : String(err) };
+    }
   });
 }
 
