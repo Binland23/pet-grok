@@ -2,7 +2,7 @@
 
 An always-on-top desktop pet for the **Grok Build** CLI. Cute kawaii pets that react in real time to agent lifecycle events (thinking → working → done).
 
-Shipped themes: **Race Engineer Crab**, **Cloud Pup**, **Bubble Axolotl**, and **Matcha Frog** — pick from the dashboard.
+Shipped themes: **Race Engineer Crab**, **Cloud Pup**, **Bubble Axolotl**, **Matcha Frog**, and **Snorlax Buddy** — pick from the dashboard.
 
 Inspired by clawd-on-desk and Codex Pets.
 
@@ -146,7 +146,7 @@ After installing, start (or reload hooks in) a Grok session — press **`r`** in
 |------|--------|
 | **Open Dashboard…** | Settings window (pets, size, hooks, live status) |
 | Show / Hide Pet | Toggle overlay visibility |
-| Pet | Switch theme (Race Crab / Cloud Pup / Bubble Axolotl / Matcha Frog) |
+| Pet | Switch theme (Race Crab / Cloud Pup / Bubble Axolotl / Matcha Frog / Snorlax Buddy) |
 | Size (S / M / L) | 128 / 192 / 256 px window |
 | Mute | Toggle WEEEE + done celebration SFX |
 | Install / Uninstall Grok Hooks | Manage `pet.json` only |
@@ -161,7 +161,7 @@ Open from the tray or pet context menu (**Open Dashboard…**). From there you c
 - See live server / hook / pet state
 - Change size, visibility, mute
 - Install or refresh Grok hooks
-- Choose a **pet** (Race Crab, Cloud Pup, Bubble Axolotl, Matcha Frog — drop more under `themes/<id>/` and they appear automatically)
+- Choose a **pet** (Race Crab, Cloud Pup, Bubble Axolotl, Matcha Frog, Snorlax Buddy — drop more under `themes/<id>/` and they appear automatically)
 
 
 Other behavior:
@@ -184,6 +184,7 @@ Shipped:
 | `cloud-pup` | Cloud Pup |
 | `bubble-axolotl` | Bubble Axolotl |
 | `matcha-frog` | Matcha Frog |
+| `snorlax-buddy` | Snorlax Buddy |
 
 Pick pets from the **Dashboard → Pet** cards or the tray **Pet** menu.
 
@@ -243,14 +244,16 @@ States: `idle`, `thinking`, `working`, `done`, `alert`, `sleep`, `wake` (plus op
 │       ├── race-crab/
 │       ├── cloud-pup/
 │       ├── bubble-axolotl/
-│       └── matcha-frog/
+│       ├── matcha-frog/
+│       └── snorlax-buddy/
 ├── scripts/
 │   └── process_theme_poses.py
 └── themes/
     ├── race-crab/
     ├── cloud-pup/
     ├── bubble-axolotl/
-    └── matcha-frog/
+    ├── matcha-frog/
+    └── snorlax-buddy/
 ```
 
 ## Platform notes
