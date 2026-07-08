@@ -17,12 +17,14 @@ const prefs = require('./prefs');
 const hooks = require('./hooks');
 const { startStateServer } = require('./state-server');
 const platform = require('./platform');
+const themes = require('./themes');
 
 const IDLE_TIMEOUT_MS = 60_000;
-const THEMES_DIR = path.join(__dirname, '..', 'themes');
 
 /** @type {BrowserWindow | null} */
 let mainWindow = null;
+/** @type {BrowserWindow | null} */
+let dashboardWindow = null;
 /** @type {Tray | null} */
 let tray = null;
 /** @type {ReturnType<typeof startStateServer> | null} */
@@ -31,15 +33,17 @@ let stateServer = null;
 let idleTimer = null;
 /** @type {ReturnType<typeof prefs.load> | null} */
 let state = null;
+/** @type {string} */
+let lastKnownState = 'idle';
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    if (mainWindow) {
+    openDashboard();
+    if (mainWindow && getState().visible !== false) {
       if (!mainWindow.isVisible()) mainWindow.show();
-      mainWindow.focus();
     }
   });
 }
@@ -52,27 +56,24 @@ function getState() {
 function loadTheme(themeId) {
   const s = getState();
   const id = themeId || s.themeId || 'race-crab';
-  const themePath = path.join(THEMES_DIR, id, 'theme.json');
-  try {
-    return JSON.parse(fs.readFileSync(themePath, 'utf8'));
-  } catch {
-    return {
-      id: 'race-crab',
-      name: 'Race Engineer Crab',
-      palette: {
-        shell: '#1e3a5f',
-        shellDark: '#0f2438',
-        accent: '#e10600',
-        highlight: '#ffd200',
-        eye: '#ffffff',
-        pupil: '#111111',
-        belly: '#c45c26',
-        claw: '#e10600',
-      },
-      celebrateMs: 2500,
-      idleTimeoutMs: IDLE_TIMEOUT_MS,
-    };
-  }
+  const fromDisk = themes.loadThemeJson(id);
+  if (fromDisk) return fromDisk;
+  return {
+    id: 'race-crab',
+    name: 'Race Engineer Crab',
+    palette: {
+      shell: '#1e3a5f',
+      shellDark: '#0f2438',
+      accent: '#e10600',
+      highlight: '#ffd200',
+      eye: '#ffffff',
+      pupil: '#111111',
+      belly: '#c45c26',
+      claw: '#e10600',
+    },
+    celebrateMs: 2500,
+    idleTimeoutMs: IDLE_TIMEOUT_MS,
+  };
 }
 
 /** Active agent states must NEVER auto-sleep (long model responses have no hooks). */
@@ -114,12 +115,14 @@ function appendPushLog(line) {
 
 function pushState(petState) {
   const at = Date.now();
+  lastKnownState = petState;
   const hasWindow = !!(mainWindow && !mainWindow.isDestroyed());
   pushHistory.push({ state: petState, at, window: hasWindow });
   if (pushHistory.length > 40) pushHistory.shift();
   const line = `[pushState] ${petState} window=${hasWindow} at=${at}`;
   console.log(line);
   appendPushLog(line);
+  broadcastDashboardSnapshot();
 
   if (hasWindow) {
     const send = () => {
@@ -255,25 +258,23 @@ function createTrayImage() {
 function buildAppMenu() {
   const s = getState();
   const installed = hooks.isInstalled();
+  const theme = loadTheme(s.themeId);
   return Menu.buildFromTemplate([
     {
-      label: 'Pet Grok',
+      label: theme.name || 'Pet Grok',
       enabled: false,
+    },
+    { type: 'separator' },
+    {
+      label: 'Open Dashboard…',
+      accelerator: platform.isMac ? 'Cmd+,' : 'Ctrl+,',
+      click: () => openDashboard(),
     },
     { type: 'separator' },
     {
       label: s.visible === false ? 'Show Pet' : 'Hide Pet',
       click: () => {
-        if (!mainWindow) return;
-        if (mainWindow.isVisible()) {
-          mainWindow.hide();
-          s.visible = false;
-        } else {
-          mainWindow.showInactive();
-          s.visible = true;
-        }
-        prefs.save(s);
-        rebuildTray();
+        applySettingsPatch({ visible: s.visible === false });
       },
     },
     { type: 'separator' },
@@ -291,12 +292,7 @@ function buildAppMenu() {
       type: 'checkbox',
       checked: !!s.mute,
       click: (item) => {
-        s.mute = item.checked;
-        prefs.save(s);
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('pet:prefs', { mute: s.mute, size: s.size });
-        }
-        rebuildTray();
+        applySettingsPatch({ mute: item.checked });
       },
     },
     { type: 'separator' },
@@ -311,6 +307,7 @@ function buildAppMenu() {
           console.log('[hooks] installed', p);
         }
         rebuildTray();
+        broadcastDashboardSnapshot();
       },
     },
     { type: 'separator' },
@@ -327,7 +324,145 @@ function buildAppMenu() {
 function rebuildTray() {
   if (!tray) return;
   tray.setContextMenu(buildAppMenu());
-  tray.setToolTip('Pet Grok — Race Engineer Crab');
+  const theme = loadTheme(getState().themeId);
+  tray.setToolTip(`Pet Grok — ${theme.name || 'Desktop pet'}`);
+}
+
+/**
+ * Build a serializable dashboard snapshot for the settings UI.
+ */
+function buildDashboardSnapshot() {
+  const s = getState();
+  const theme = loadTheme(s.themeId);
+  const themeList = themes.listThemes().map((t) => ({
+    id: t.id,
+    name: t.name,
+    description: t.description,
+    previewUrl: t.preview ? platform.pathToAssetUrl(t.preview) : null,
+  }));
+  let serverOk = false;
+  let lastState = lastKnownState;
+  if (stateServer) {
+    serverOk = true;
+    try {
+      lastState = stateServer.getLastState() || lastKnownState;
+    } catch {
+      /* ignore */
+    }
+  }
+  return {
+    size: s.size || 'M',
+    mute: !!s.mute,
+    visible: s.visible !== false,
+    themeId: s.themeId || 'race-crab',
+    themeName: theme.name || s.themeId || 'Pet',
+    themes: themeList,
+    hooksInstalled: hooks.isInstalled(),
+    hooksPath: hooks.getHookFilePath(),
+    serverOk,
+    lastState,
+    history: pushHistory.slice(-12),
+    version: app.getVersion() || '1.0.0',
+  };
+}
+
+function broadcastDashboardSnapshot() {
+  if (!dashboardWindow || dashboardWindow.isDestroyed()) return;
+  try {
+    dashboardWindow.webContents.send('dashboard:snapshot', buildDashboardSnapshot());
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Apply a prefs patch from menu or dashboard; updates pet + tray + dashboard.
+ * @param {Record<string, unknown>} patch
+ */
+function applySettingsPatch(patch) {
+  const s = getState();
+  if (patch.size != null && ['S', 'M', 'L'].includes(String(patch.size))) {
+    s.size = String(patch.size);
+  }
+  if (typeof patch.mute === 'boolean') s.mute = patch.mute;
+  if (typeof patch.visible === 'boolean') s.visible = patch.visible;
+  if (patch.themeId != null && String(patch.themeId).trim()) {
+    s.themeId = String(patch.themeId).trim();
+  }
+  prefs.save(s);
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (patch.size != null) {
+      const size = prefs.sizePx(s.size);
+      const [x, y] = mainWindow.getPosition();
+      mainWindow.setBounds({ x, y, width: size, height: size });
+    }
+    if (typeof patch.visible === 'boolean') {
+      if (s.visible === false) mainWindow.hide();
+      else mainWindow.showInactive();
+    }
+    mainWindow.webContents.send('pet:prefs', {
+      mute: s.mute,
+      size: s.size,
+      themeId: s.themeId,
+    });
+    if (patch.themeId != null) {
+      mainWindow.webContents.send('pet:theme-changed', loadTheme(s.themeId));
+    }
+  }
+
+  rebuildTray();
+  broadcastDashboardSnapshot();
+  return buildDashboardSnapshot();
+}
+
+function openDashboard() {
+  if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+    dashboardWindow.show();
+    dashboardWindow.focus();
+    broadcastDashboardSnapshot();
+    return dashboardWindow;
+  }
+
+  const display = screen.getPrimaryDisplay();
+  const { width: sw, height: sh } = display.workAreaSize;
+  const { x: ox, y: oy } = display.workArea;
+  const width = 780;
+  const height = 620;
+  const x = Math.round(ox + (sw - width) / 2);
+  const y = Math.round(oy + (sh - height) / 2);
+
+  dashboardWindow = new BrowserWindow({
+    width,
+    height,
+    x,
+    y,
+    minWidth: 640,
+    minHeight: 520,
+    show: false,
+    title: 'Pet Grok — Dashboard',
+    backgroundColor: '#0b1220',
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, '..', 'preload', 'dashboard-preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+
+  dashboardWindow.loadFile(path.join(__dirname, '..', 'renderer', 'dashboard.html'));
+  dashboardWindow.once('ready-to-show', () => {
+    if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+      dashboardWindow.show();
+      dashboardWindow.focus();
+      broadcastDashboardSnapshot();
+    }
+  });
+  dashboardWindow.on('closed', () => {
+    dashboardWindow = null;
+  });
+  return dashboardWindow;
 }
 
 function popupPetMenu() {
@@ -347,14 +482,7 @@ function popupPetMenu() {
 }
 
 function applySize(key) {
-  const s = getState();
-  s.size = key;
-  prefs.save(s);
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  const size = prefs.sizePx(key);
-  const [x, y] = mainWindow.getPosition();
-  mainWindow.setBounds({ x, y, width: size, height: size });
-  mainWindow.webContents.send('pet:prefs', { mute: s.mute, size: s.size });
+  applySettingsPatch({ size: key });
 }
 
 function createTray() {
@@ -374,11 +502,12 @@ function registerIpc() {
       mute: s.mute,
       size: s.size,
       themeId: s.themeId,
+      visible: s.visible !== false,
     };
   });
   ipcMain.handle('pet:get-push-history', () => pushHistory.slice(-20));
   ipcMain.handle('pet:get-animations', () => {
-    const p = path.join(__dirname, '..', 'renderer', 'assets', 'race-crab', 'animations.json');
+    const p = themes.themeAnimationsPath(getState().themeId);
     try {
       return JSON.parse(fs.readFileSync(p, 'utf8'));
     } catch (err) {
@@ -387,10 +516,43 @@ function registerIpc() {
     }
   });
   ipcMain.handle('pet:asset-path', (_e, rel) => {
-    // Return file:// URL for a renderer asset under assets/race-crab/
-    const safe = String(rel || '').replace(/\\/g, '/').replace(/\.\./g, '');
-    const abs = path.join(__dirname, '..', 'renderer', 'assets', 'race-crab', ...safe.split('/').filter(Boolean));
+    const abs = themes.themeAssetAbs(getState().themeId, rel);
     return platform.pathToAssetUrl(abs);
+  });
+
+  // —— Dashboard ——
+  ipcMain.handle('dashboard:get-snapshot', () => buildDashboardSnapshot());
+  ipcMain.handle('dashboard:apply-settings', (_e, patch) => {
+    return applySettingsPatch(patch && typeof patch === 'object' ? patch : {});
+  });
+  ipcMain.handle('dashboard:set-theme', (_e, themeId) => {
+    return applySettingsPatch({ themeId: String(themeId || 'race-crab') });
+  });
+  ipcMain.handle('dashboard:install-hooks', () => {
+    const p = hooks.installHooks();
+    console.log('[hooks] installed from dashboard', p);
+    rebuildTray();
+    return buildDashboardSnapshot();
+  });
+  ipcMain.handle('dashboard:uninstall-hooks', () => {
+    hooks.uninstallHooks();
+    console.log('[hooks] uninstalled from dashboard');
+    rebuildTray();
+    return buildDashboardSnapshot();
+  });
+  ipcMain.handle('dashboard:open-health', async () => {
+    if (!stateServer) return { ok: false, lastState: lastKnownState };
+    return {
+      ok: true,
+      lastState: stateServer.getLastState(),
+      history: stateServer.getHistory().slice(-12),
+      pid: process.pid,
+    };
+  });
+  ipcMain.on('dashboard:close', () => {
+    if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+      dashboardWindow.close();
+    }
   });
 
   ipcMain.on('pet:set-ignore', (_e, ignore) => {

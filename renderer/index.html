@@ -325,6 +325,27 @@
 
         api.onState((s) => setState(s));
         api.setIgnoreMouse(true);
+
+        if (api.onThemeChanged) {
+          api.onThemeChanged(async (theme) => {
+            try {
+              if (theme?.celebrateMs) celebrateMs = Math.min(theme.celebrateMs, 2000);
+              if (theme?.wakeMs) wakeMs = theme.wakeMs;
+              anims = await loadAnimations();
+              setState(current || 'idle');
+            } catch (err) {
+              console.error('[theme reload]', err);
+            }
+          });
+        }
+        if (api.onPrefs) {
+          api.onPrefs((p) => {
+            // size is handled by main window bounds; mute reserved
+            if (p && p.themeId) {
+              /* theme change also arrives via onThemeChanged */
+            }
+          });
+        }
       }
 
       init();

@@ -46,4 +46,9 @@ contextBridge.exposeInMainWorld('petAPI', {
   showContextMenu() {
     ipcRenderer.send('pet:context-menu');
   },
+  onThemeChanged(callback) {
+    const handler = (_event, theme) => callback(theme);
+    ipcRenderer.on('pet:theme-changed', handler);
+    return () => ipcRenderer.removeListener('pet:theme-changed', handler);
+  },
 });

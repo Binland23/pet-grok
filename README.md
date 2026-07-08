@@ -153,6 +153,7 @@ After installing, start (or reload hooks in) a Grok session — press **`r`** in
 
 | Item | Action |
 |------|--------|
+| **Open Dashboard…** | Settings window (pets, size, hooks, live status) |
 | Show / Hide Pet | Toggle overlay visibility |
 | Size (S / M / L) | 128 / 192 / 256 px window |
 | Mute | Reserved for optional sounds |
@@ -160,6 +161,16 @@ After installing, start (or reload hooks in) a Grok session — press **`r`** in
 | Quit | Exit the app |
 
 The **same menu** is available by **right-clicking the pet** on the desktop.
+
+### Dashboard
+
+Open from the tray or pet context menu (**Open Dashboard…**). From there you can:
+
+- See live server / hook / pet state
+- Change size, visibility, mute
+- Install or refresh Grok hooks
+- Choose a **pet** (themes under `themes/<id>/` — more pets appear automatically later)
+
 
 Other behavior:
 
@@ -215,16 +226,20 @@ The pet view is a **single** `renderer/index.html` that loads theme sprites from
 ├── RUN ME.bat                  # Windows daily launcher
 ├── RUN ME ONCE FIRST.bat       # Windows first-time install + start
 ├── main/
-│   ├── main.js           # window, tray, single-instance, IPC
+│   ├── main.js           # pet window, dashboard, tray, IPC
 │   ├── platform.js       # OS helpers (AOT, tray, file URLs)
+│   ├── themes.js         # list/load pet themes
 │   ├── state-server.js   # 127.0.0.1:7788
 │   ├── hooks.js          # install/uninstall pet.json
 │   ├── pet-state-hook.js # bundled helper copied into ~/.grok/hooks
-│   └── prefs.js          # position, size, mute
+│   └── prefs.js          # position, size, mute, themeId
 ├── preload/
-│   └── preload.js
+│   ├── preload.js
+│   └── dashboard-preload.js
 ├── renderer/
-│   └── index.html        # pet UI + animations
+│   ├── index.html        # pet UI + animations
+│   └── dashboard.html    # settings dashboard
+
 └── themes/
     └── race-crab/
         └── theme.json
