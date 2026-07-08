@@ -2,13 +2,25 @@
 
 An always-on-top desktop pet for the **Grok Build** CLI. Cute kawaii pets that react in real time to agent lifecycle events (thinking → working → done).
 
-Shipped themes: **Hermit Crab**, **Cloud Pup**, **Bubble Axolotl**, **Matcha Frog**, and **Snorlax Buddy** — pick from the dashboard.
+Shipped themes: **Hermit Crab**, **Cloud Pup**, **Bubble Axolotl**, **Matcha Frog**, and **Doze Buddy** — pick from the dashboard.
 
 Inspired by clawd-on-desk and Codex Pets.
 
+## [Download Pet Grok for macOS or Windows →](https://github.com/Binland23/pet-grok/releases/latest)
+
+Open the latest release and download the file for your computer:
+
+| Platform | Download |
+|----------|----------|
+| macOS — Apple silicon (M1/M2/M3/M4/M5) | `Pet-Grok-…-macOS-arm64.dmg` |
+| macOS — Intel | `Pet-Grok-…-macOS-x64.dmg` |
+| Windows — 64-bit | `Pet-Grok-Setup-…-Windows-x64.exe` |
+
+The installers are not code-signed yet. On macOS, right-click Pet Grok and choose **Open** on first launch. Windows may show a SmartScreen warning; choose **More info → Run anyway**. If you prefer, the source-install instructions remain below.
+
 ## Requirements
 
-- Node.js 18+
+- Node.js 22.12+
 - npm
 - **macOS** or **Windows** (first-class; same codebase)
 - Grok Build CLI (`grok`) for live reactions
@@ -18,7 +30,7 @@ Inspired by clawd-on-desk and Codex Pets.
 
 ### macOS (recommended)
 
-1. **Install Node.js 18+** if needed  
+1. **Install Node.js 22.12+** if needed
    - [nodejs.org](https://nodejs.org/) or Homebrew: `brew install node`
 2. **Download / clone** this repo and open the folder in Finder.
 3. **First time only** — double-click **`RUN ME ONCE FIRST.command`**  
@@ -158,7 +170,7 @@ After installing, start (or reload hooks in) a Grok session — press **`r`** in
 |------|--------|
 | **Open Dashboard…** | Settings window (pets, size, hooks, live status) |
 | Show / Hide Pet | Toggle overlay visibility |
-| Pet | Switch theme (Hermit Crab / Cloud Pup / Bubble Axolotl / Matcha Frog / Snorlax Buddy) |
+| Pet | Switch theme (Hermit Crab / Cloud Pup / Bubble Axolotl / Matcha Frog / Doze Buddy) |
 | Size (S / M / L) | 128 / 192 / 256 px window |
 | Mute | Toggle WEEEE + done celebration SFX |
 | Install / Uninstall Grok Hooks | Manage `pet.json` only |
@@ -173,7 +185,7 @@ Open from the tray or pet context menu (**Open Dashboard…**). From there you c
 - See live server / hook / pet state
 - Change size, visibility, mute
 - Install or refresh Grok hooks
-- Choose a **pet** (Hermit Crab, Cloud Pup, Bubble Axolotl, Matcha Frog, Snorlax Buddy — drop more under `themes/<id>/` and they appear automatically)
+- Choose a **pet** (Hermit Crab, Cloud Pup, Bubble Axolotl, Matcha Frog, Doze Buddy — drop more under `themes/<id>/` and they appear automatically)
 
 
 Other behavior:
@@ -196,7 +208,7 @@ Shipped:
 | `cloud-pup` | Cloud Pup |
 | `bubble-axolotl` | Bubble Axolotl |
 | `matcha-frog` | Matcha Frog |
-| `snorlax-buddy` | Snorlax Buddy |
+| `doze-buddy` | Doze Buddy |
 
 Pick pets from the **Dashboard → Pet** cards or the tray **Pet** menu.
 
@@ -257,7 +269,7 @@ States: `idle`, `thinking`, `working`, `done`, `alert`, `sleep`, `wake` (plus op
 │       ├── cloud-pup/
 │       ├── bubble-axolotl/
 │       ├── matcha-frog/
-│       └── snorlax-buddy/
+│       └── doze-buddy/
 ├── scripts/
 │   └── process_theme_poses.py
 └── themes/
@@ -265,7 +277,7 @@ States: `idle`, `thinking`, `working`, `done`, `alert`, `sleep`, `wake` (plus op
     ├── cloud-pup/
     ├── bubble-axolotl/
     ├── matcha-frog/
-    └── snorlax-buddy/
+    └── doze-buddy/
 ```
 
 ## Platform notes
