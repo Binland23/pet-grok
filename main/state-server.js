@@ -22,12 +22,15 @@ const EVENT_TO_STATE = {
   userpromptsubmit: 'thinking',
   user_prompt_submit: 'thinking',
   beforesubmitprompt: 'thinking',
+  before_submit_prompt: 'thinking',
   pretooluse: 'working',
   pre_tool_use: 'working',
   posttooluse: 'working',
   post_tool_use: 'working',
   posttoolusefailure: 'alert',
   post_tool_use_failure: 'alert',
+  permissiondenied: 'alert',
+  permission_denied: 'alert',
   stop: 'done',
   stopfailure: 'alert',
   stop_failure: 'alert',
@@ -39,6 +42,7 @@ const EVENT_TO_STATE = {
   subagentstop: 'working',
   subagent_stop: 'working',
   subagentend: 'working',
+  subagent_end: 'working',
 };
 
 function isLoopback(addr) {

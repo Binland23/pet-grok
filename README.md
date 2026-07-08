@@ -25,8 +25,6 @@ On macOS, if Gatekeeper blocks the file: right-click → **Open** → Open.
 If Terminal says “permission denied”:  
 `chmod +x "RUN ME.command" "RUN ME ONCE FIRST.command"`
 
-(`start.command` is a thin alias that runs `RUN ME.command`.)
-
 **Terminal (either OS):**
 
 ```bash
@@ -45,9 +43,9 @@ On first launch the app:
 
 ```
 Grok lifecycle event
-  → ~/.grok/hooks/pet.json  (curl command)
-  → POST 127.0.0.1:7788/state  (plain-text body)
-  → Electron main → IPC
+  → ~/.grok/hooks/pet.json  (type: http)
+  → POST http://127.0.0.1:7788/hook  (event JSON envelope)
+  → Electron main onState → IPC
   → Pet renderer animation
 ```
 
@@ -103,16 +101,7 @@ npm run uninstall-hooks
 
 ### Generated `~/.grok/hooks/pet.json`
 
-Hooks run a small Node helper (`pet-state.js`) that POSTs plain text to `127.0.0.1:7788/state`. Platform-specific install:
-
-| OS | Command shape | Extra files |
-|----|---------------|-------------|
-| **macOS** | `"node" "…/pet-state.js" thinking` | `pet-state.js` |
-| **Windows** | `"…\pet-run.cmd" thinking` | `pet-state.js` + `pet-run.cmd` |
-
-`pet-run.cmd` avoids PowerShell’s `curl` alias and CreateProcess path-with-spaces issues. Paths with spaces (e.g. `C:\Users\First Last\…`) are quoted.
-
-Example (macOS / Linux):
+Hooks use Grok’s native **`type: "http"`** runner (macOS and Windows). Grok POSTs the lifecycle event envelope as JSON to the pet’s local server; the server maps `hookEventName` → pet state (`thinking` / `working` / `done` / …).
 
 ```json
 {
@@ -121,8 +110,30 @@ Example (macOS / Linux):
       {
         "hooks": [
           {
-            "type": "command",
-            "command": "\"/usr/local/bin/node\" \"/Users/you/.grok/hooks/pet-state.js\" thinking",
+            "type": "http",
+            "url": "http://127.0.0.1:7788/hook",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:7788/hook",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:7788/hook",
             "timeout": 5
           }
         ]
@@ -132,27 +143,11 @@ Example (macOS / Linux):
 }
 ```
 
-Example (Windows):
+Helper scripts (`pet-state.js`, `pet-run.sh` / `pet-run.cmd`) are still installed for manual debugging; the default path does not require shelling out to Node.
 
-```json
-{
-  "hooks": {
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"C:\\Users\\you\\.grok\\hooks\\pet-run.cmd\" thinking",
-            "timeout": 5
-          }
-        ]
-      }
-    ]
-  }
-}
-```
+After installing, start (or reload hooks in) a Grok session — press **`r`** in the `/hooks` modal if the session was already open. Use `/hooks` in the TUI to confirm `pet.json` is loaded. Global hooks under `~/.grok/hooks/` (Windows: `%USERPROFILE%\.grok\hooks\`) are always trusted.
 
-After installing, start (or reload hooks in) a Grok session. Use `/hooks` in the TUI to confirm `pet.json` is loaded. Global hooks under `~/.grok/hooks/` (Windows: `%USERPROFILE%\.grok\hooks\`) are always trusted.
+**Requires the pet process running** so `127.0.0.1:7788` is bound. If the pet is quit, hooks fail open and the crab stays idle.
 
 ## Tray menu
 
@@ -217,7 +212,6 @@ The pet view is a **single** `renderer/index.html` that loads theme sprites from
 ├── README.md
 ├── RUN ME.command              # macOS daily launcher (double-click)
 ├── RUN ME ONCE FIRST.command   # macOS first-time install + start
-├── start.command               # alias → RUN ME.command
 ├── RUN ME.bat                  # Windows daily launcher
 ├── RUN ME ONCE FIRST.bat       # Windows first-time install + start
 ├── main/

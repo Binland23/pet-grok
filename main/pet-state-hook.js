@@ -26,12 +26,44 @@ function dbg(msg) {
   }
 }
 
-const state = String(process.argv[2] || '')
+/**
+ * Resolve pet state from argv, or from Grok's GROK_HOOK_EVENT when spawned
+ * without an explicit state (HTTP is preferred; this is command fallback).
+ */
+function stateFromHookEvent(ev) {
+  if (!ev) return '';
+  const key = String(ev)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, '');
+  const map = {
+    sessionstart: 'wake',
+    session_start: 'wake',
+    userpromptsubmit: 'thinking',
+    user_prompt_submit: 'thinking',
+    pretooluse: 'working',
+    pre_tool_use: 'working',
+    posttooluse: 'working',
+    post_tool_use: 'working',
+    posttoolusefailure: 'alert',
+    post_tool_use_failure: 'alert',
+    stop: 'done',
+    notification: 'alert',
+    sessionend: 'sleep',
+    session_end: 'sleep',
+  };
+  return map[key] || '';
+}
+
+let state = String(process.argv[2] || '')
   .trim()
   .toLowerCase();
+if (!state) {
+  state = stateFromHookEvent(process.env.GROK_HOOK_EVENT || '');
+}
 
 if (!state) {
-  dbg('missing state arg');
+  dbg('missing state arg and GROK_HOOK_EVENT');
   process.stderr.write('usage: pet-state.js <state>\n');
   process.exit(2);
 }

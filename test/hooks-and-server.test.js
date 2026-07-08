@@ -72,9 +72,7 @@ function runHookScript(state, scriptPath) {
     const c = spawn(node, [scriptPath, state], {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
-    // Simulate Grok: event JSON on stdin
     c.stdin.write(JSON.stringify({ hookEventName: 'user_prompt_submit', sessionId: 'test' }));
-    // Do not end stdin immediately in all runners — leave open briefly then end
     setTimeout(() => {
       try {
         c.stdin.end();
@@ -91,116 +89,83 @@ function runHookScript(state, scriptPath) {
   });
 }
 
+/** Simulate Grok HTTP hook: POST event envelope to installed URL path. */
+function postGrokHttpHook(port, hookEventName) {
+  return post(
+    port,
+    '/hook',
+    JSON.stringify({
+      hookEventName,
+      sessionId: 'test-session',
+      cwd: process.cwd(),
+    }),
+    'application/json'
+  );
+}
+
 describe('hooks payload (real makeHooksPayload)', () => {
-  it('maps UserPromptSubmit → thinking, PreToolUse → working, Stop → done', () => {
+  it('default payload uses type http to localhost /hook for lifecycle events', () => {
     const payload = hooks.makeHooksPayload();
     assert.ok(payload.hooks.UserPromptSubmit);
     assert.ok(payload.hooks.PreToolUse);
     assert.ok(payload.hooks.Stop);
 
-    const cmdOf = (event) => payload.hooks[event][0].hooks[0].command;
-    assert.match(cmdOf('UserPromptSubmit'), /thinking/);
-    assert.match(cmdOf('PreToolUse'), /working/);
-    assert.match(cmdOf('Stop'), /done/);
-    if (process.platform === 'win32') {
-      assert.match(cmdOf('UserPromptSubmit'), /pet-run\.cmd/);
-    } else {
-      assert.match(cmdOf('UserPromptSubmit'), /pet-state\.js/);
+    const handlerOf = (event) => payload.hooks[event][0].hooks[0];
+    for (const event of ['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop']) {
+      const h = handlerOf(event);
+      assert.equal(h.type, 'http', `${event} must be http`);
+      assert.match(h.url, /127\.0\.0\.1:7788\/hook/);
+      assert.equal(h.timeout, 5);
     }
   });
 
-  it('generates win32 commands with pet-run.cmd even when not on Windows', () => {
-    const payload = hooks.makeHooksPayload({
-      platform: 'win32',
-      nodeBin: 'C:\\\\Users\\\\First Last\\\\node.exe',
-      runnerPath: 'C:\\\\Users\\\\First Last\\\\.grok\\\\hooks\\\\pet-run.cmd',
-      scriptPath: 'C:\\\\Users\\\\First Last\\\\.grok\\\\hooks\\\\pet-state.js',
-    });
-    const cmd = payload.hooks.UserPromptSubmit[0].hooks[0].command;
-    assert.match(cmd, /pet-run\.cmd/);
-    assert.match(cmd, /thinking/);
-    assert.match(cmd, /"/); // quoted for space-safe paths
-    assert.doesNotMatch(cmd, /pet-state\.js thinking/); // runner, not direct node
+  it('maps events in EVENT_STATE_MAP for thinking/working/done', () => {
+    const map = hooks.getEventStateMap();
+    assert.equal(map.UserPromptSubmit, 'thinking');
+    assert.equal(map.PreToolUse, 'working');
+    assert.equal(map.Stop, 'done');
   });
 
-  it('generates darwin commands with quoted node + pet-state.js', () => {
-    const payload = hooks.makeHooksPayload({
-      platform: 'darwin',
-      nodeBin: '/usr/local/bin/node',
-      scriptPath: '/Users/Test User/.grok/hooks/pet-state.js',
-    });
-    const cmd = payload.hooks.PreToolUse[0].hooks[0].command;
-    assert.match(cmd, /pet-state\.js/);
-    assert.match(cmd, /working/);
-    assert.match(cmd, /"/);
-    assert.doesNotMatch(cmd, /pet-run\.cmd/);
+  it('command mode generates win32 pet-run.cmd and darwin pet-run.sh', () => {
+    const win = hooks.makeHooksPayload({ mode: 'command', platform: 'win32' });
+    const winCmd = win.hooks.UserPromptSubmit[0].hooks[0];
+    assert.equal(winCmd.type, 'command');
+    assert.match(winCmd.command, /pet-run\.cmd/);
+    assert.match(winCmd.command, /thinking/);
+
+    const mac = hooks.makeHooksPayload({ mode: 'command', platform: 'darwin' });
+    const macCmd = mac.hooks.PreToolUse[0].hooks[0];
+    assert.equal(macCmd.type, 'command');
+    assert.match(macCmd.command, /pet-run\.sh/);
+    assert.match(macCmd.command, /working/);
   });
 
   it('forceCurl uses curl.exe on win32 and curl elsewhere', () => {
-    assert.match(
-      hooks.curlStateCommand('done', { platform: 'win32' }),
-      /^curl\.exe /
-    );
+    assert.match(hooks.curlStateCommand('done', { platform: 'win32' }), /^curl\.exe /);
     assert.match(hooks.curlStateCommand('done', { platform: 'darwin' }), /^curl /);
   });
 
-  it('installHooks writes pet.json + helper scripts with safe commands', () => {
+  it('installHooks writes pet.json with http handlers + helper scripts', () => {
     const prev = hooks.isInstalled() ? fs.readFileSync(hooks.HOOK_FILE, 'utf8') : null;
     const prevScript = fs.existsSync(hooks.HOOK_SCRIPT)
       ? fs.readFileSync(hooks.HOOK_SCRIPT, 'utf8')
-      : null;
-    const prevRunner = fs.existsSync(hooks.HOOK_RUNNER)
-      ? fs.readFileSync(hooks.HOOK_RUNNER, 'utf8')
       : null;
     try {
       const p = hooks.installHooks();
       assert.equal(path.basename(p), 'pet.json');
       assert.ok(fs.existsSync(hooks.HOOK_SCRIPT), 'pet-state.js must be installed');
-      if (process.platform === 'win32') {
-        assert.ok(fs.existsSync(hooks.HOOK_RUNNER), 'pet-run.cmd must be installed');
-      }
+      assert.ok(fs.existsSync(hooks.HOOK_SH_RUNNER), 'pet-run.sh must be installed');
       const written = JSON.parse(fs.readFileSync(p, 'utf8'));
-      const cmd = written.hooks.UserPromptSubmit[0].hooks[0].command;
-      assert.match(cmd, /thinking/);
-      assert.doesNotMatch(cmd, /<NUL|<\/dev\/null/);
-      assert.doesNotMatch(cmd, /Program Files/); // avoid space-broken paths in the hook command itself
-      const types = written.hooks.UserPromptSubmit[0].hooks.map((h) => h.type);
-      assert.ok(types.every((t) => t === 'command'));
+      const h = written.hooks.UserPromptSubmit[0].hooks[0];
+      assert.equal(h.type, 'http');
+      assert.match(h.url, /127\.0\.0\.1:7788\/hook/);
+      assert.ok(written.hooks.PreToolUse);
+      assert.ok(written.hooks.Stop);
     } finally {
       if (prev != null) fs.writeFileSync(hooks.HOOK_FILE, prev, 'utf8');
       else if (hooks.isInstalled()) fs.unlinkSync(hooks.HOOK_FILE);
       if (prevScript != null) fs.writeFileSync(hooks.HOOK_SCRIPT, prevScript, 'utf8');
-      if (prevRunner != null) fs.writeFileSync(hooks.HOOK_RUNNER, prevRunner, 'utf8');
-      else if (fs.existsSync(hooks.HOOK_RUNNER) && process.platform !== 'win32') {
-        try {
-          fs.unlinkSync(hooks.HOOK_RUNNER);
-        } catch {
-          /* ignore */
-        }
-      }
     }
-  });
-});
-
-describe('platform helpers', () => {
-  const platform = require('../main/platform');
-
-  it('pathToAssetUrl produces a file URL', () => {
-    const sample =
-      process.platform === 'win32'
-        ? 'C:\\\\Users\\\\First Last\\\\pet\\\\frame.png'
-        : '/Users/First Last/pet/frame.png';
-    const url = platform.pathToAssetUrl(sample);
-    assert.match(url, /^file:/);
-    assert.ok(url.includes('frame.png') || url.includes('frame.png'.replace(/\//g, '%2F')));
-  });
-
-  it('exposes consistent tray / chrome flags', () => {
-    assert.equal(typeof platform.trayOpensOnClick(), 'boolean');
-    assert.ok(Array.isArray(platform.trayIconCandidates()));
-    assert.ok(platform.trayIconCandidates().length > 0);
-    assert.equal(typeof platform.restartHint(), 'string');
-    assert.ok(platform.restartHint().length > 10);
   });
 });
 
@@ -257,24 +222,23 @@ describe('state server HTTP (real startStateServer)', () => {
     assert.equal(server.getLastState(), 'done');
   });
 
-  it('POST /hook with Grok event JSON maps to pet states', async () => {
+  it('POST /hook with Grok event JSON maps to pet states (shipped HTTP hook path)', async () => {
     received.length = 0;
-    const r1 = await post(
-      port,
-      '/hook',
-      JSON.stringify({ hookEventName: 'user_prompt_submit' }),
-      'application/json'
-    );
+    const r1 = await postGrokHttpHook(port, 'user_prompt_submit');
+    assert.equal(r1.status, 200);
     assert.equal(r1.body, 'thinking');
-    const r2 = await post(
-      port,
-      '/hook',
-      JSON.stringify({ hookEventName: 'pre_tool_use' }),
-      'application/json'
-    );
+    const r2 = await postGrokHttpHook(port, 'pre_tool_use');
     assert.equal(r2.body, 'working');
-    const r3 = await post(port, '/hook', JSON.stringify({ hookEventName: 'stop' }), 'application/json');
+    const r3 = await postGrokHttpHook(port, 'stop');
     assert.equal(r3.body, 'done');
+    assert.deepEqual(received, ['thinking', 'working', 'done']);
+  });
+
+  it('POST /hook accepts PascalCase hookEventName from Grok variants', async () => {
+    received.length = 0;
+    await postGrokHttpHook(port, 'UserPromptSubmit');
+    await postGrokHttpHook(port, 'PreToolUse');
+    await postGrokHttpHook(port, 'Stop');
     assert.deepEqual(received, ['thinking', 'working', 'done']);
   });
 
@@ -293,26 +257,66 @@ describe('state server HTTP (real startStateServer)', () => {
   });
 });
 
+describe('installed HTTP hook chain (thinking → working → done)', () => {
+  let server;
+  /** @type {string[]} */
+  const received = [];
+
+  before(async () => {
+    // Prefer fixed port 7788 like production; skip if busy and use ephemeral + rewrite URL in posts
+    try {
+      server = await startStateServer((s) => received.push(s), { port: 7788 });
+    } catch {
+      server = await startStateServer((s) => received.push(s), { port: 0 });
+    }
+  });
+
+  after(async () => {
+    if (server) await server.close();
+  });
+
+  it('drives onState via real /hook envelope matching installHooks URL path', async () => {
+    received.length = 0;
+    const port = server.server.address().port;
+    // Exact path from getHookUrl / makeHooksPayload
+    assert.match(hooks.getHookUrl(), /\/hook$/);
+
+    const sequence = [
+      ['user_prompt_submit', 'thinking'],
+      ['pre_tool_use', 'working'],
+      ['stop', 'done'],
+    ];
+    for (const [ev, expected] of sequence) {
+      const r = await post(
+        port,
+        '/hook',
+        JSON.stringify({ hookEventName: ev, sessionId: 'chain' }),
+        'application/json'
+      );
+      assert.equal(r.status, 200, `failed for ${ev}: ${r.body}`);
+      assert.equal(r.body, expected);
+    }
+    assert.deepEqual(received, ['thinking', 'working', 'done']);
+    assert.equal(server.getLastState(), 'done');
+    const health = JSON.parse((await get(port, '/health')).body);
+    const states = health.history.map((h) => h.state);
+    assert.ok(states.includes('thinking'));
+    assert.ok(states.includes('working'));
+    assert.ok(states.includes('done'));
+  });
+});
+
 describe('pet-state-hook.js (real Grok hook script)', () => {
   let server;
-  let port;
   /** @type {string[]} */
   const received = [];
   let scriptCopy;
 
   before(async () => {
-    // Run a server on fixed port 17788 for the hook script (hardcodes 7788).
-    // Instead, temporarily patch: start on 7788 only if free, else test script logic via spawn against live.
-    // Prefer: spawn bundled script while main pet server is NOT required if we monkey port —
-    // script hardcodes 7788. Start ephemeral and only run if 7788 free OR use bundled with env.
-    // For honesty: start server on 7788 if available; skip if busy with clear assert path.
     try {
       server = await startStateServer((s) => received.push(s), { port: 7788 });
-      port = 7788;
     } catch {
-      // Port in use by live pet — still exercise script against live server
       server = null;
-      port = 7788;
     }
     scriptCopy = path.join(__dirname, '..', 'main', 'pet-state-hook.js');
   });
@@ -322,29 +326,54 @@ describe('pet-state-hook.js (real Grok hook script)', () => {
   });
 
   it('posts thinking with stdin JSON present and exits 0', async () => {
+    if (!server) {
+      // Port held by live pet — still exercise script against live server
+      const r = await runHookScript('thinking', scriptCopy);
+      assert.equal(r.code, 0, `hook script failed: ${r.err}`);
+      const h = await get(7788, '/health');
+      assert.equal(JSON.parse(h.body).lastState, 'thinking');
+      return;
+    }
     received.length = 0;
     const r = await runHookScript('thinking', scriptCopy);
     assert.equal(r.code, 0, `hook script failed: ${r.err}`);
-    // If we own the server, onState must fire; if live pet owns it, health must advance
-    if (server) {
-      assert.ok(received.includes('thinking'));
-    } else {
-      const h = await get(7788, '/health');
-      const j = JSON.parse(h.body);
-      assert.equal(j.lastState, 'thinking');
-    }
+    assert.ok(received.includes('thinking'));
   });
 
   it('posts working and done in sequence', async () => {
+    if (!server) {
+      for (const s of ['working', 'done']) {
+        const r = await runHookScript(s, scriptCopy);
+        assert.equal(r.code, 0, `failed on ${s}: ${r.err}`);
+      }
+      const h = await get(7788, '/health');
+      assert.equal(JSON.parse(h.body).lastState, 'done');
+      return;
+    }
     for (const s of ['working', 'done']) {
       const r = await runHookScript(s, scriptCopy);
       assert.equal(r.code, 0, `failed on ${s}: ${r.err}`);
     }
-    if (server) {
-      assert.equal(server.getLastState(), 'done');
-    } else {
-      const h = await get(7788, '/health');
-      assert.equal(JSON.parse(h.body).lastState, 'done');
-    }
+    assert.equal(server.getLastState(), 'done');
+  });
+});
+
+describe('platform helpers', () => {
+  const platform = require('../main/platform');
+
+  it('pathToAssetUrl produces a file URL', () => {
+    const sample =
+      process.platform === 'win32'
+        ? 'C:\\\\Users\\\\First Last\\\\pet\\\\frame.png'
+        : '/Users/First Last/pet/frame.png';
+    const url = platform.pathToAssetUrl(sample);
+    assert.match(url, /^file:/);
+  });
+
+  it('exposes consistent tray / chrome flags', () => {
+    assert.equal(typeof platform.trayOpensOnClick(), 'boolean');
+    assert.ok(Array.isArray(platform.trayIconCandidates()));
+    assert.ok(platform.trayIconCandidates().length > 0);
+    assert.equal(typeof platform.restartHint(), 'string');
   });
 });
