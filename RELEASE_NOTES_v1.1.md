@@ -9,7 +9,7 @@ Desktop companion for the Grok Build CLI. v1.1 turns a single-pet prototype into
 
 ## macOS quick start
 
-1. **Install Node.js 18+** if you don’t already have it  
+1. **Install Node.js 22.12+** if you don’t already have it
    - [nodejs.org](https://nodejs.org/) LTS, or Homebrew:  
      `brew install node`
 2. **Get the project** — clone or download this repo and open the folder in Finder.

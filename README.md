@@ -20,7 +20,7 @@ The installers are not code-signed yet. On macOS, right-click Pet Grok and choos
 
 ## Requirements
 
-- Node.js 18+
+- Node.js 22.12+
 - npm
 - **macOS** or **Windows** (first-class; same codebase)
 - Grok Build CLI (`grok`) for live reactions
@@ -30,7 +30,7 @@ The installers are not code-signed yet. On macOS, right-click Pet Grok and choos
 
 ### macOS (recommended)
 
-1. **Install Node.js 18+** if needed  
+1. **Install Node.js 22.12+** if needed
    - [nodejs.org](https://nodejs.org/) or Homebrew: `brew install node`
 2. **Download / clone** this repo and open the folder in Finder.
 3. **First time only** — double-click **`RUN ME ONCE FIRST.command`**  

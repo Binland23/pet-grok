@@ -3,9 +3,12 @@
   "version": "1.1.1",
   "description": "Always-on-top desktop pet for Grok Build CLI — multi-theme kawaii companion",
   "main": "main/main.js",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
     "start": "electron .",
-    "test": "node --test test/**/*.test.js",
+    "test": "node --test",
     "dist": "electron-builder",
     "dist:mac": "electron-builder --mac",
     "dist:win": "electron-builder --win",
