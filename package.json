@@ -1,17 +1,11 @@
 {
   "name": "pet-grok",
-  "version": "1.1.2",
+  "version": "1.1.0",
   "description": "Always-on-top desktop pet for Grok Build CLI — multi-theme kawaii companion",
   "main": "main/main.js",
-  "engines": {
-    "node": ">=22.12.0"
-  },
   "scripts": {
     "start": "electron .",
-    "test": "node --test",
-    "dist": "electron-builder --publish never",
-    "dist:mac": "electron-builder --mac --publish never",
-    "dist:win": "electron-builder --win --publish never",
+    "test": "node --test test/**/*.test.js",
     "install-hooks": "node -e \"require('./main/hooks').installHooks()\"",
     "uninstall-hooks": "node -e \"require('./main/hooks').uninstallHooks()\""
   },
@@ -21,66 +15,9 @@
     "grok",
     "grok-build"
   ],
-  "author": "Binland23",
+  "author": "",
   "license": "MIT",
   "devDependencies": {
-    "electron": "39.8.5",
-    "electron-builder": "^26.15.3"
-  },
-  "build": {
-    "appId": "com.binland23.petgrok",
-    "productName": "Pet Grok",
-    "copyright": "Copyright © 2026 Binland23",
-    "directories": {
-      "output": "dist"
-    },
-    "files": [
-      "main/**/*",
-      "preload/**/*",
-      "renderer/**/*",
-      "themes/**/*",
-      "assets/icons/**/*",
-      "package.json"
-    ],
-    "mac": {
-      "category": "public.app-category.developer-tools",
-      "icon": "build/icon.png",
-      "identity": null,
-      "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "arm64",
-            "x64"
-          ]
-        },
-        {
-          "target": "zip",
-          "arch": [
-            "arm64",
-            "x64"
-          ]
-        }
-      ],
-      "artifactName": "Pet-Grok-${version}-macOS-${arch}.${ext}"
-    },
-    "win": {
-      "icon": "build/icon.png",
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "artifactName": "Pet-Grok-Setup-${version}-Windows-${arch}.${ext}"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
-    }
+    "electron": "^33.2.0"
   }
 }
