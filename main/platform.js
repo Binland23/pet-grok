@@ -13,7 +13,7 @@ const isMac = process.platform === 'darwin';
 const isLinux = process.platform === 'linux';
 
 /** App id for Windows taskbar / toast grouping */
-const APP_USER_MODEL_ID = 'com.binland23.petgrok';
+const APP_USER_MODEL_ID = 'com.petgrok.app';
 
 /**
  * Configure process-level app chrome once Electron is ready.

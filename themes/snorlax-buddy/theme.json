@@ -1,7 +1,7 @@
 {
-  "id": "doze-buddy",
-  "name": "Doze Buddy",
-  "description": "Sleepy teal companion with a cream belly and plenty of nap energy",
+  "id": "snorlax-buddy",
+  "name": "Snorlax Buddy",
+  "description": "Chubby teal doze-buddy with a cream belly — Snorlax-inspired nap energy",
   "sprites": {
     "idle": "sprites/idle.png",
     "thinking": "sprites/thinking.png",

@@ -27,12 +27,7 @@ function prefsPath() {
 function load() {
   try {
     const raw = fs.readFileSync(prefsPath(), 'utf8');
-    const loaded = { ...DEFAULTS, ...JSON.parse(raw) };
-    // Preserve the selected sleepy pet for users upgrading from v1.1.0.
-    if (loaded.themeId === 'snorlax-buddy') {
-      loaded.themeId = 'doze-buddy';
-    }
-    return loaded;
+    return { ...DEFAULTS, ...JSON.parse(raw) };
   } catch {
     return { ...DEFAULTS };
   }
