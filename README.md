@@ -2,7 +2,7 @@
 
 An always-on-top desktop pet for the **Grok Build** CLI. Cute kawaii pets that react in real time to agent lifecycle events (thinking → working → done).
 
-Shipped themes: **Hermit Crab**, **Cloud Pup**, **Bubble Axolotl**, and **Snorlax Buddy** — pick from the dashboard.
+Shipped themes: **Hermit Crab**, **Cloud Pup**, and **Bubble Axolotl** — pick from the dashboard.
 
 Inspired by clawd-on-desk and Codex Pets.
 
@@ -159,7 +159,7 @@ After installing, start (or reload hooks in) a Grok session — press **`r`** in
 |------|--------|
 | **Open Dashboard…** | Settings window (pets, size, hooks, live status) |
 | Show / Hide Pet | Toggle overlay visibility |
-| Pet | Switch theme (Hermit Crab / Cloud Pup / Bubble Axolotl / Snorlax Buddy) |
+| Pet | Switch theme (Hermit Crab / Cloud Pup / Bubble Axolotl) |
 | Tray icon | Grok logo / match pet / fixed pet |
 | Size (S / M / L) | 128 / 192 / 256 px window |
 | Mute | Toggle WEEEE + done celebration SFX |
@@ -175,7 +175,7 @@ Open from the tray or pet context menu (**Open Dashboard…**). From there you c
 - See live server / hook / pet state
 - Change size, visibility, mute
 - Install or refresh Grok hooks
-- Choose a **pet** (Hermit Crab, Cloud Pup, Bubble Axolotl, Snorlax Buddy — drop more under `themes/<id>/` and they appear automatically)
+- Choose a **pet** (Hermit Crab, Cloud Pup, Bubble Axolotl — drop more under `themes/<id>/` and they appear automatically)
 - Choose the **tray icon** (Grok logo by default, match active pet, or any pet idle) — updates live
 
 
@@ -198,7 +198,6 @@ Shipped:
 | `race-crab` | Hermit Crab (default) |
 | `cloud-pup` | Cloud Pup |
 | `bubble-axolotl` | Bubble Axolotl |
-| `snorlax-buddy` | Snorlax Buddy |
 
 Pick pets from the **Dashboard → Pet** cards or the tray **Pet** menu.
 
@@ -280,15 +279,13 @@ python3 scripts/interpolate_smooth_frames.py <theme-id> <state>
 │   └── assets/
 │       ├── race-crab/
 │       ├── cloud-pup/
-│       ├── bubble-axolotl/
-│       └── snorlax-buddy/
+│       └── bubble-axolotl/
 ├── scripts/
 │   └── process_theme_poses.py
 └── themes/
     ├── race-crab/
     ├── cloud-pup/
-    ├── bubble-axolotl/
-    └── snorlax-buddy/
+    └── bubble-axolotl/
 ```
 
 ## Platform notes
