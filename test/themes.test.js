@@ -12,7 +12,6 @@ const SHIPPED_THEMES = [
   { id: 'race-crab', name: 'Hermit Crab' },
   { id: 'cloud-pup', name: 'Cloud Pup' },
   { id: 'bubble-axolotl', name: 'Bubble Axolotl' },
-  { id: 'matcha-frog', name: 'Matcha Frog' },
   { id: 'snorlax-buddy', name: 'Snorlax Buddy' },
 ];
 

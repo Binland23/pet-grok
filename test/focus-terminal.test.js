@@ -97,7 +97,7 @@ describe('focus-terminal (shipped helpers)', () => {
 });
 
 describe('click animation asset (shipped animations.json)', () => {
-  for (const themeId of ['race-crab', 'cloud-pup', 'bubble-axolotl', 'matcha-frog', 'snorlax-buddy']) {
+  for (const themeId of ['race-crab', 'cloud-pup', 'bubble-axolotl', 'snorlax-buddy']) {
     it(`defines a click sequence for ${themeId}`, () => {
       const p = path.join(__dirname, '..', 'renderer', 'assets', themeId, 'animations.json');
       const j = JSON.parse(fs.readFileSync(p, 'utf8'));

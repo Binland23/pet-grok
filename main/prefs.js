@@ -16,6 +16,8 @@ const DEFAULTS = {
   size: 'M',
   mute: false,
   themeId: 'race-crab',
+  /** Tray / menu-bar icon: 'grok' | 'match-pet' | theme id */
+  trayIconId: 'grok',
   hooksAutoInstalled: false,
   visible: true,
 };

@@ -2,7 +2,7 @@
 
 An always-on-top desktop pet for the **Grok Build** CLI. Cute kawaii pets that react in real time to agent lifecycle events (thinking → working → done).
 
-Shipped themes: **Hermit Crab**, **Cloud Pup**, **Bubble Axolotl**, **Matcha Frog**, and **Snorlax Buddy** — pick from the dashboard.
+Shipped themes: **Hermit Crab**, **Cloud Pup**, **Bubble Axolotl**, and **Snorlax Buddy** — pick from the dashboard.
 
 Inspired by clawd-on-desk and Codex Pets.
 
@@ -26,7 +26,8 @@ Inspired by clawd-on-desk and Codex Pets.
    - If Terminal says permission denied:  
      `chmod +x "RUN ME ONCE FIRST.command" "RUN ME.command"`  
    - This runs `npm install` and starts Pet Grok.
-4. **Every later launch** — double-click **`RUN ME.command`**
+4. **Every later launch** — double-click **`RUN ME.command`**  
+   - The Terminal window minimizes automatically so it stays out of the way (click its Dock icon to show it again / stop the pet with Ctrl+C).
 5. Confirm a pet is on the desktop and a **menu bar** icon is present (no Dock icon).
 6. In a Grok TUI session: run **`/hooks`**, press **`r`** to reload hooks, and submit a prompt that uses tools — the pet should go **thinking → working → done**.
 
@@ -158,7 +159,8 @@ After installing, start (or reload hooks in) a Grok session — press **`r`** in
 |------|--------|
 | **Open Dashboard…** | Settings window (pets, size, hooks, live status) |
 | Show / Hide Pet | Toggle overlay visibility |
-| Pet | Switch theme (Hermit Crab / Cloud Pup / Bubble Axolotl / Matcha Frog / Snorlax Buddy) |
+| Pet | Switch theme (Hermit Crab / Cloud Pup / Bubble Axolotl / Snorlax Buddy) |
+| Tray icon | Grok logo / match pet / fixed pet |
 | Size (S / M / L) | 128 / 192 / 256 px window |
 | Mute | Toggle WEEEE + done celebration SFX |
 | Install / Uninstall Grok Hooks | Manage `pet.json` only |
@@ -173,7 +175,8 @@ Open from the tray or pet context menu (**Open Dashboard…**). From there you c
 - See live server / hook / pet state
 - Change size, visibility, mute
 - Install or refresh Grok hooks
-- Choose a **pet** (Hermit Crab, Cloud Pup, Bubble Axolotl, Matcha Frog, Snorlax Buddy — drop more under `themes/<id>/` and they appear automatically)
+- Choose a **pet** (Hermit Crab, Cloud Pup, Bubble Axolotl, Snorlax Buddy — drop more under `themes/<id>/` and they appear automatically)
+- Choose the **tray icon** (Grok logo by default, match active pet, or any pet idle) — updates live
 
 
 Other behavior:
@@ -195,7 +198,6 @@ Shipped:
 | `race-crab` | Hermit Crab (default) |
 | `cloud-pup` | Cloud Pup |
 | `bubble-axolotl` | Bubble Axolotl |
-| `matcha-frog` | Matcha Frog |
 | `snorlax-buddy` | Snorlax Buddy |
 
 Pick pets from the **Dashboard → Pet** cards or the tray **Pet** menu.
@@ -256,7 +258,6 @@ States: `idle`, `thinking`, `working`, `done`, `alert`, `sleep`, `wake` (plus op
 │       ├── race-crab/
 │       ├── cloud-pup/
 │       ├── bubble-axolotl/
-│       ├── matcha-frog/
 │       └── snorlax-buddy/
 ├── scripts/
 │   └── process_theme_poses.py
@@ -264,7 +265,6 @@ States: `idle`, `thinking`, `working`, `done`, `alert`, `sleep`, `wake` (plus op
     ├── race-crab/
     ├── cloud-pup/
     ├── bubble-axolotl/
-    ├── matcha-frog/
     └── snorlax-buddy/
 ```
 

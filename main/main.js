@@ -249,29 +249,136 @@ function createWindow() {
   });
 }
 
-/** Color tray icon (not monochrome template). */
-function createTrayImage() {
+const TRAY_ICON_GROK = 'grok';
+const TRAY_ICON_MATCH_PET = 'match-pet';
+
+/** @returns {string} Resolved theme id or 'grok' for the tray bitmap */
+function resolveTrayIconId() {
+  const s = getState();
+  const raw = String(s.trayIconId || TRAY_ICON_GROK).trim() || TRAY_ICON_GROK;
+  if (raw === TRAY_ICON_MATCH_PET) {
+    return s.themeId || 'race-crab';
+  }
+  return raw;
+}
+
+/**
+ * Resize a nativeImage for the menu bar / notification tray.
+ * @param {Electron.NativeImage} img
+ * @param {{ template?: boolean }} [opts]
+ */
+function fitTrayImage(img, opts = {}) {
+  if (!img || img.isEmpty()) return img;
+  const size = platform.trayIconSize();
+  let out = img;
+  if (out.getSize().width !== size || out.getSize().height !== size) {
+    out = out.resize({ width: size, height: size, quality: 'best' });
+  }
+  // Monochrome Grok mark → template on macOS (adapts to menu bar theme)
+  if (opts.template && platform.isMac) {
+    out.setTemplateImage(true);
+  }
+  return out;
+}
+
+function loadGrokTrayImage() {
   const iconsDir = path.join(__dirname, '..', 'assets', 'icons');
   const candidates = platform.trayIconCandidates();
-
   for (const name of candidates) {
     const p = path.join(iconsDir, name);
     if (!fs.existsSync(p)) continue;
-    let img = nativeImage.createFromPath(p);
+    const img = nativeImage.createFromPath(p);
     if (img.isEmpty()) continue;
-    // Menubar / tray prefers a small bitmap
-    const size = platform.trayIconSize();
-    if (img.getSize().width > size * 2) {
-      img = img.resize({ width: size, height: size, quality: 'best' });
-    }
-    // Color icon — do NOT setTemplateImage (that forces greyscale on macOS)
-    return img;
+    return fitTrayImage(img, { template: true });
   }
+  return null;
+}
 
-  // Last-resort fallback pixel
+/** Pet idle sprite as a color tray icon (transparent background). */
+function loadPetTrayImage(themeId) {
+  const id = themeId || 'race-crab';
+  const list = themes.listThemes();
+  const match = list.find((t) => t.id === id);
+  const previewPath =
+    (match && match.preview) ||
+    path.join(__dirname, '..', 'themes', id, 'sprites', 'idle.png');
+  if (!previewPath || !fs.existsSync(previewPath)) return null;
+  const img = nativeImage.createFromPath(previewPath);
+  if (img.isEmpty()) return null;
+  return fitTrayImage(img, { template: false });
+}
+
+/**
+ * Tray icon from prefs: Grok logo (default), match active pet, or a fixed pet.
+ * Icons use transparent backgrounds (no circular plate).
+ */
+function createTrayImage() {
+  const resolved = resolveTrayIconId();
+  let img = null;
+  if (resolved === TRAY_ICON_GROK) {
+    img = loadGrokTrayImage();
+  } else {
+    img = loadPetTrayImage(resolved) || loadGrokTrayImage();
+  }
+  if (img && !img.isEmpty()) return img;
   return nativeImage.createFromDataURL(
     'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
   );
+}
+
+function updateTrayImage() {
+  if (!tray) return;
+  try {
+    tray.setImage(createTrayImage());
+  } catch (err) {
+    console.warn('[tray] setImage failed', err && err.message);
+  }
+}
+
+/** Options for dashboard / tray menu pickers */
+function listTrayIconOptions() {
+  const grokPreview = path.join(__dirname, '..', 'assets', 'icons', 'tray-64.png');
+  /** @type {{ id: string, name: string, description: string, previewUrl: string|null, kind: string }[]} */
+  const options = [
+    {
+      id: TRAY_ICON_GROK,
+      name: 'Grok logo',
+      description: 'xAI mark · transparent',
+      previewUrl: fs.existsSync(grokPreview) ? platform.pathToAssetUrl(grokPreview) : null,
+      kind: 'grok',
+    },
+    {
+      id: TRAY_ICON_MATCH_PET,
+      name: 'Match pet',
+      description: 'Follows the active pet',
+      previewUrl: null,
+      kind: 'match',
+    },
+  ];
+  for (const t of themes.listThemes()) {
+    options.push({
+      id: t.id,
+      name: t.name || t.id,
+      description: 'Pet idle pose',
+      previewUrl: t.preview ? platform.pathToAssetUrl(t.preview) : null,
+      kind: 'pet',
+    });
+  }
+  const matchOpt = options.find((o) => o.id === TRAY_ICON_MATCH_PET);
+  if (matchOpt) {
+    const current = themes.listThemes().find((t) => t.id === (getState().themeId || 'race-crab'));
+    if (current && current.preview) {
+      matchOpt.previewUrl = platform.pathToAssetUrl(current.preview);
+    }
+  }
+  return options;
+}
+
+function isValidTrayIconId(id) {
+  const raw = String(id || '').trim();
+  if (!raw) return false;
+  if (raw === TRAY_ICON_GROK || raw === TRAY_ICON_MATCH_PET) return true;
+  return themes.listThemes().some((t) => t.id === raw);
 }
 
 /** Shared menu for tray + right-click on the pet */
@@ -305,6 +412,15 @@ function buildAppMenu() {
         type: 'radio',
         checked: (s.themeId || 'race-crab') === t.id,
         click: () => applySettingsPatch({ themeId: t.id }),
+      })),
+    },
+    {
+      label: 'Tray icon',
+      submenu: listTrayIconOptions().map((opt) => ({
+        label: opt.name,
+        type: 'radio',
+        checked: (s.trayIconId || TRAY_ICON_GROK) === opt.id,
+        click: () => applySettingsPatch({ trayIconId: opt.id }),
       })),
     },
     {
@@ -352,9 +468,17 @@ function buildAppMenu() {
 
 function rebuildTray() {
   if (!tray) return;
+  updateTrayImage();
   tray.setContextMenu(buildAppMenu());
   const theme = loadTheme(getState().themeId);
-  tray.setToolTip(`Pet Grok — ${theme.name || 'Desktop pet'}`);
+  const trayId = getState().trayIconId || TRAY_ICON_GROK;
+  const trayLabel =
+    trayId === TRAY_ICON_GROK
+      ? 'Grok logo'
+      : trayId === TRAY_ICON_MATCH_PET
+        ? `Match pet (${theme.name || 'pet'})`
+        : loadTheme(trayId).name || trayId;
+  tray.setToolTip(`Pet Grok — ${theme.name || 'Desktop pet'} · tray: ${trayLabel}`);
 }
 
 /**
@@ -385,6 +509,8 @@ function buildDashboardSnapshot() {
     visible: s.visible !== false,
     themeId: s.themeId || 'race-crab',
     themeName: theme.name || s.themeId || 'Pet',
+    trayIconId: s.trayIconId || TRAY_ICON_GROK,
+    trayIcons: listTrayIconOptions(),
     themes: themeList,
     hooksInstalled: hooks.isInstalled(),
     hooksPath: hooks.getHookFilePath(),
@@ -418,6 +544,9 @@ function applySettingsPatch(patch) {
   if (patch.themeId != null && String(patch.themeId).trim()) {
     s.themeId = String(patch.themeId).trim();
   }
+  if (patch.trayIconId != null && isValidTrayIconId(patch.trayIconId)) {
+    s.trayIconId = String(patch.trayIconId).trim();
+  }
   prefs.save(s);
 
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -434,6 +563,7 @@ function applySettingsPatch(patch) {
       mute: s.mute,
       size: s.size,
       themeId: s.themeId,
+      trayIconId: s.trayIconId,
     });
     if (patch.themeId != null) {
       mainWindow.webContents.send('pet:theme-changed', loadTheme(s.themeId));
@@ -457,7 +587,7 @@ function openDashboard() {
   const { width: sw, height: sh } = display.workAreaSize;
   const { x: ox, y: oy } = display.workArea;
   const width = 780;
-  const height = 620;
+  const height = 720;
   const x = Math.round(ox + (sw - width) / 2);
   const y = Math.round(oy + (sh - height) / 2);
 

@@ -235,6 +235,78 @@
       color: var(--text-muted);
     }
 
+    .tray-icons {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
+      gap: 8px;
+    }
+    .tray-card {
+      position: relative;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      border-radius: 12px;
+      padding: 10px 8px 10px;
+      cursor: pointer;
+      text-align: center;
+      color: inherit;
+      font: inherit;
+      transition: border-color 0.15s ease, transform 0.15s ease, background 0.15s ease;
+    }
+    .tray-card:hover {
+      border-color: rgba(255,255,255,0.22);
+      transform: translateY(-1px);
+    }
+    .tray-card.selected {
+      border-color: var(--border-strong);
+      background: linear-gradient(180deg, rgba(255, 210, 0, 0.08), var(--surface-2));
+      box-shadow: inset 0 0 0 1px rgba(255, 210, 0, 0.12);
+    }
+    .tray-card .thumb {
+      width: 44px;
+      height: 44px;
+      margin: 0 auto 8px;
+      border-radius: 10px;
+      background: #0a101c;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    .tray-card .thumb img {
+      width: 78%;
+      height: 78%;
+      object-fit: contain;
+    }
+    /* Black Grok mark → invert so it reads on the dark dashboard */
+    .tray-card[data-kind="grok"] .thumb img {
+      filter: invert(1);
+      width: 70%;
+      height: 70%;
+    }
+    .tray-card .name {
+      font-weight: 700;
+      font-size: 11px;
+      letter-spacing: -0.01em;
+      line-height: 1.25;
+    }
+    .tray-card .desc {
+      margin-top: 3px;
+      font-size: 10px;
+      color: var(--text-muted);
+      line-height: 1.3;
+    }
+    .tray-card .badge {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      font-size: 8px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--gold);
+    }
+
     .field {
       display: flex;
       flex-direction: column;
@@ -451,6 +523,12 @@
     </div>
 
     <section class="card">
+      <h2>Tray icon</h2>
+      <div class="tray-icons" id="trayIcons" role="listbox" aria-label="System tray icon"></div>
+      <p class="hint">Menu bar / notification area icon. Updates instantly — default is the Grok logo with a transparent background.</p>
+    </section>
+
+    <section class="card">
       <h2>Quick actions</h2>
       <div class="actions">
         <button type="button" class="btn primary" id="btnShowPet">Show pet</button>
@@ -572,9 +650,51 @@
         document.getElementById('footerRight').textContent = snap.version || 'v1';
       }
 
+      function renderTrayIcons() {
+        const root = document.getElementById('trayIcons');
+        if (!root) return;
+        const options = (snap && snap.trayIcons) || [];
+        const current = (snap && snap.trayIconId) || 'grok';
+        if (!options.length) {
+          root.innerHTML = '<p class="hint">No tray icons available.</p>';
+          return;
+        }
+        root.innerHTML = options
+          .map((opt) => {
+            const selected = opt.id === current ? 'selected' : '';
+            const badge = opt.id === current ? '<span class="badge">Active</span>' : '';
+            const kind = opt.kind || 'pet';
+            const img = opt.previewUrl
+              ? `<img src="${escapeHtml(opt.previewUrl)}" alt="" />`
+              : '<span style="color:#8fa3bb;font-size:10px">—</span>';
+            return `
+              <button type="button" class="tray-card ${selected}" data-tray="${escapeHtml(opt.id)}" data-kind="${escapeHtml(kind)}" role="option" aria-selected="${opt.id === current}">
+                ${badge}
+                <div class="thumb">${img}</div>
+                <div class="name">${escapeHtml(opt.name)}</div>
+                <div class="desc">${escapeHtml(opt.description || '')}</div>
+              </button>`;
+          })
+          .join('');
+
+        root.querySelectorAll('[data-tray]').forEach((btn) => {
+          btn.addEventListener('click', async () => {
+            const id = btn.getAttribute('data-tray');
+            try {
+              snap = await api.applySettings({ trayIconId: id });
+              renderAll();
+              toast('Tray icon updated');
+            } catch (e) {
+              toast('Could not update tray icon');
+            }
+          });
+        });
+      }
+
       function renderAll() {
         renderStatus();
         renderPets();
+        renderTrayIcons();
         renderSettings();
       }
 
