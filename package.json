@@ -5,7 +5,7 @@
   "main": "main/main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node --test test/**/*.test.js",
+    "test": "node --test",
     "install-hooks": "node -e \"require('./main/hooks').installHooks()\"",
     "uninstall-hooks": "node -e \"require('./main/hooks').uninstallHooks()\""
   },
