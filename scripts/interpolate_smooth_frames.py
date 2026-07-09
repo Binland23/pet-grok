@@ -3,8 +3,8 @@
 
 Use when Imagine video is rate-limited or moderated for a theme/state.
 
-  python3 scripts/interpolate_smooth_frames.py snorlax-buddy working
-  python3 scripts/interpolate_smooth_frames.py snorlax-buddy --all-missing
+  python3 scripts/interpolate_smooth_frames.py matcha-frog working
+  python3 scripts/interpolate_smooth_frames.py matcha-frog --all-missing
 """
 from __future__ import annotations
 

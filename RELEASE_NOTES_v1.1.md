@@ -50,7 +50,7 @@ npm start
 
 ## Highlights
 
-- **Five selectable pets** with full animation sets  
+- **Four selectable pets** with full animation sets
 - **Reliable Grok TUI hooks** (fixed so they actually show up and fire)  
 - **Settings dashboard** for pets, size, visibility, mute, and hooks  
 - **Click the pet** to focus your Grok terminal + **WEEEE**  
@@ -67,6 +67,7 @@ Pick any pet from **Dashboard → Pet** or **tray / right-click → Pet**.
 | `race-crab` | Hermit Crab | Default (v1.0 art, renamed for branding) |
 | `cloud-pup` | Cloud Pup | Fluffy cloud puppy |
 | `bubble-axolotl` | Bubble Axolotl | Pastel pink axolotl + bubbles |
+| `matcha-frog` | Matcha Frog | Leaf-hat tea-shop frog |
 
 Each pet includes: **idle**, **thinking**, **working**, **done**, **alert**, **sleep**, **wake**, and **click**.
 
@@ -142,7 +143,7 @@ If Pet Grok is **already running** but **hidden**, starting a Grok session posts
 
 | Area | What landed |
 |------|-------------|
-| Multi-pet | Cloud Pup, Bubble Axolotl + Hermit Crab working refresh |
+| Multi-pet | Cloud Pup, Bubble Axolotl, Matcha Frog + Hermit Crab working refresh |
 | Hooks | Command-mode absolute paths; SSRF-safe; SessionStart show |
 | Dashboard | Pet picker, size, mute, hooks, status |
 | Interaction | Click focus Grok + WEEEE; idle bounce; SFX; laptop working |

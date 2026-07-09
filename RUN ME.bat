@@ -1,4 +1,9 @@
 @echo off
+if /i not "%~1"=="--minimized" (
+  start "" /min "%~f0" --minimized
+  exit /b
+)
+
 title Pet Grok
 cd /d "%~dp0"
 

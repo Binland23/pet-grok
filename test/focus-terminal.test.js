@@ -12,6 +12,7 @@ const {
   processExists,
   resolveTerminalHost,
   getTty,
+  focusActiveGrokTerminal,
   ACTIVE_SESSIONS_PATH,
 } = require('../main/focus-terminal');
 
@@ -94,10 +95,77 @@ describe('focus-terminal (shipped helpers)', () => {
     assert.equal(picked.cwd, '/tmp/project');
     fs.rmSync(dir, { recursive: true, force: true });
   });
+
+  it('uses the Windows terminal fallback when session metadata is empty', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pet-grok-empty-sessions-'));
+    const file = path.join(dir, 'active_sessions.json');
+    fs.writeFileSync(file, '[]', 'utf8');
+    let receivedPid = -1;
+    const result = await focusActiveGrokTerminal({
+      sessionsPath: file,
+      platform: 'win32',
+      focusWindowsFn: async (pid) => {
+        receivedPid = pid;
+        return { ok: true, strategy: 'terminal-fallback', process: 'WindowsTerminal' };
+      },
+    });
+    assert.equal(receivedPid, 0);
+    assert.equal(result.ok, true);
+    assert.equal(result.reason, 'terminal-fallback:WindowsTerminal');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('uses the Windows terminal fallback when the recorded session is stale', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pet-grok-stale-sessions-'));
+    const file = path.join(dir, 'active_sessions.json');
+    fs.writeFileSync(
+      file,
+      JSON.stringify([{ session_id: 'stale', pid: 99999999, cwd: 'C:\\project' }]),
+      'utf8'
+    );
+    let receivedPid = -1;
+    const result = await focusActiveGrokTerminal({
+      sessionsPath: file,
+      platform: 'win32',
+      processExistsFn: () => false,
+      focusWindowsFn: async (pid) => {
+        receivedPid = pid;
+        return { ok: true, strategy: 'terminal-fallback', process: 'WindowsTerminal' };
+      },
+    });
+    assert.equal(receivedPid, 0);
+    assert.equal(result.ok, true);
+    assert.equal(result.session.session_id, 'stale');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('prefers a living Windows session process when one is available', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pet-grok-live-sessions-'));
+    const file = path.join(dir, 'active_sessions.json');
+    fs.writeFileSync(
+      file,
+      JSON.stringify([{ session_id: 'live', pid: process.pid, cwd: process.cwd() }]),
+      'utf8'
+    );
+    let receivedPid = 0;
+    const result = await focusActiveGrokTerminal({
+      sessionsPath: file,
+      platform: 'win32',
+      processExistsFn: (pid) => pid === process.pid,
+      focusWindowsFn: async (pid) => {
+        receivedPid = pid;
+        return { ok: true, strategy: 'process-tree', process: 'node' };
+      },
+    });
+    assert.equal(receivedPid, process.pid);
+    assert.equal(result.ok, true);
+    assert.equal(result.reason, 'process-tree:node');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
 });
 
 describe('click animation asset (shipped animations.json)', () => {
-  for (const themeId of ['race-crab', 'cloud-pup', 'bubble-axolotl', 'snorlax-buddy']) {
+  for (const themeId of ['race-crab', 'cloud-pup', 'bubble-axolotl', 'matcha-frog']) {
     it(`defines a click sequence for ${themeId}`, () => {
       const p = path.join(__dirname, '..', 'renderer', 'assets', themeId, 'animations.json');
       const j = JSON.parse(fs.readFileSync(p, 'utf8'));

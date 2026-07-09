@@ -58,12 +58,14 @@
     <canvas id="petCanvas" width="256" height="256"></canvas>
     <div id="status">boot</div>
   </div>
+  <script src="./animation-loop.js"></script>
   <script>
     (function () {
       const canvas = document.getElementById('petCanvas');
       const ctx = canvas.getContext('2d');
       const statusEl = document.getElementById('status');
       const api = window.petAPI;
+      const { advanceFrame, shouldPreserveFrame, framePathsForMode } = window.PetAnimationLoop;
       const ASSET = './assets/race-crab/';
 
       /**
@@ -86,17 +88,18 @@
       const CLICK_MS_FALLBACK = 520;
       const DRAG_THRESHOLD_PX = 6;
       /**
-       * Extra idle bob on top of baked video motion — kept subtle so 24fps
+       * Extra idle bob on top of baked animation motion — kept subtle so fluid
        * Imagine clips don't feel double-animated.
        */
       const IDLE_BOB_HZ = 0.4;
       const IDLE_BOB_PX = 1.8;
       const IDLE_BOB_SCALE = 0.008;
 
-      /** @type {Record<string, {frames: HTMLImageElement[], loop: boolean, fps: number}>} */
+      /** @type {Record<string, {frames: HTMLImageElement[], loop: boolean, loopMode: string, fps: number}>} */
       let anims = {};
       let current = 'idle';
       let frameIndex = 0;
+      let frameDirection = 1;
       let frameAcc = 0;
       let lastTs = performance.now();
       let celebrateTimer = null;
@@ -116,6 +119,7 @@
       let clickAnimGen = 0;
       let clickPulse = 0; // 0..1 bounce while acknowledging click
       let muted = false;
+      let animationMode = 'fluid';
       /** @type {AudioContext|null} */
       let audioCtx = null;
 
@@ -241,6 +245,7 @@
         holdLeft = p.holdMin + Math.random() * (p.holdMax - p.holdMin);
         mode = 'hold';
         frameIndex = 0;
+        frameDirection = 1;
         frameAcc = 0;
       }
 
@@ -265,8 +270,10 @@
         const defaultFps = typeof meta.fpsDefault === 'number' ? meta.fpsDefault : 12;
         const out = {};
         for (const [state, def] of Object.entries(meta.animations || {})) {
-          // Load every frame — smooth Imagine packs are 24fps with dozens of frames
-          const list = def.frames || [];
+          // Static mode reuses the shipped hero pose for each state. Click is
+          // synthesized below from those poses because it has no hero sprite.
+          const list = framePathsForMode(state, def.frames, animationMode);
+          if (!list.length) continue;
           const frames = await Promise.all(
             list.map(async (rel) => loadImage(await resolveAssetSrc(rel)))
           );
@@ -276,11 +283,12 @@
           out[state] = {
             frames,
             loop: def.loop !== false,
+            loopMode: def.loopMode || (def.loop !== false ? 'pingpong' : 'restart'),
             fps,
           };
         }
         if (!out.wake && out.idle) {
-          out.wake = { frames: out.idle.frames.slice(), loop: false, fps: out.idle.fps };
+          out.wake = { frames: out.idle.frames.slice(), loop: false, loopMode: 'restart', fps: out.idle.fps };
         }
         if (!out.idle && out.thinking) out.idle = out.thinking;
         // Click ack: reuse alert/wake/idle frames if theme has no dedicated click anim
@@ -294,6 +302,7 @@
             out.click = {
               frames,
               loop: false,
+              loopMode: 'restart',
               fps: (MOTION.click && MOTION.click.fps) || 18,
             };
           }
@@ -314,9 +323,23 @@
         setTimeout(() => statusEl.classList.remove('flash'), 200);
       }
 
-      function setState(next) {
+      function setState(next, options = {}) {
         if (!next) return;
         next = String(next).toLowerCase();
+
+        // Repeated hook events for a continuous state are status updates, not
+        // animation restarts. Preserve the current frame and playback direction.
+        const activeAnim = anims[next];
+        const alreadyPlaying = shouldPreserveFrame({
+          force: options.force,
+          next,
+          current,
+          loop: activeAnim && activeAnim.loop,
+          alwaysPlay: profile(next).alwaysPlay,
+          mode,
+          playOnce,
+        });
+        if (alreadyPlaying) return;
 
         // Harness / external states cancel a local click ack
         if (next !== 'click') {
@@ -385,6 +408,7 @@
         // Always snap to this state's primary frame immediately so harness
         // transitions are visible.
         frameIndex = 0;
+        frameDirection = 1;
         frameAcc = 0;
         const p = profile(name);
         if (p.static) {
@@ -424,6 +448,7 @@
               if (p.playChance > 0 && Math.random() < p.playChance && anim.frames.length > 1) {
                 mode = 'play';
                 frameIndex = 0;
+                frameDirection = 1;
                 frameAcc = 0;
                 playOnce = true;
               } else {
@@ -435,13 +460,17 @@
             frameAcc += dt * p.fps;
             while (frameAcc >= 1) {
               frameAcc -= 1;
-              frameIndex += 1;
-              if (frameIndex >= anim.frames.length) {
-                if (p.alwaysPlay || (anim.loop && !playOnce)) {
-                  frameIndex = 0;
-                  continue;
-                }
-                frameIndex = anim.frames.length - 1;
+              const repeat = p.alwaysPlay || (anim.loop && !playOnce);
+              const nextFrame = advanceFrame(
+                frameIndex,
+                frameDirection,
+                anim.frames.length,
+                repeat,
+                anim.loopMode
+              );
+              frameIndex = nextFrame.frameIndex;
+              frameDirection = nextFrame.direction;
+              if (nextFrame.completed) {
                 if (current === 'click') {
                   // hold last click frame until click timer restores prior state
                   mode = 'hold';
@@ -560,7 +589,12 @@
         // True click: bounce + focus Grok terminal tab
         playClickAck();
         if (api && api.focusGrokTerminal) {
-          api.focusGrokTerminal().catch((err) => console.warn('[focus]', err));
+          api.focusGrokTerminal()
+            .then((result) => {
+              if (result && result.ok) console.log('[focus]', result.reason || 'ok');
+              else console.warn('[focus]', (result && result.reason) || 'not-found');
+            })
+            .catch((err) => console.warn('[focus]', err));
         }
       }
 
@@ -589,6 +623,14 @@
       });
 
       async function init() {
+        if (api) {
+          try {
+            const initialPrefs = await api.getPrefs();
+            if (initialPrefs && typeof initialPrefs.mute === 'boolean') muted = initialPrefs.mute;
+            if (initialPrefs && initialPrefs.animationMode === 'static') animationMode = 'static';
+          } catch (_) { /* use defaults */ }
+        }
+
         try {
           anims = await loadAnimations();
           setState('idle');
@@ -606,11 +648,6 @@
           if (theme?.wakeMs) wakeMs = theme.wakeMs;
         } catch (_) { /* ignore */ }
 
-        try {
-          const prefs = await api.getPrefs();
-          if (prefs && typeof prefs.mute === 'boolean') muted = prefs.mute;
-        } catch (_) { /* ignore */ }
-
         api.onState((s) => setState(s));
         api.setIgnoreMouse(true);
 
@@ -620,15 +657,25 @@
               if (theme?.celebrateMs) celebrateMs = theme.celebrateMs;
               if (theme?.wakeMs) wakeMs = theme.wakeMs;
               anims = await loadAnimations();
-              setState(current || 'idle');
+              setState(current || 'idle', { force: true });
             } catch (err) {
               console.error('[theme reload]', err);
             }
           });
         }
         if (api.onPrefs) {
-          api.onPrefs((p) => {
+          api.onPrefs(async (p) => {
             if (p && typeof p.mute === 'boolean') muted = p.mute;
+            const nextMode = p && p.animationMode === 'static' ? 'static' : 'fluid';
+            if (nextMode !== animationMode) {
+              animationMode = nextMode;
+              try {
+                anims = await loadAnimations();
+                setState(current || 'idle', { force: true });
+              } catch (err) {
+                console.error('[animation mode reload]', err);
+              }
+            }
           });
         }
       }

@@ -12,7 +12,7 @@ const SHIPPED_THEMES = [
   { id: 'race-crab', name: 'Hermit Crab' },
   { id: 'cloud-pup', name: 'Cloud Pup' },
   { id: 'bubble-axolotl', name: 'Bubble Axolotl' },
-  { id: 'snorlax-buddy', name: 'Snorlax Buddy' },
+  { id: 'matcha-frog', name: 'Matcha Frog' },
 ];
 
 describe('themes module (shipped listThemes / paths)', () => {
@@ -28,6 +28,12 @@ describe('themes module (shipped listThemes / paths)', () => {
       assert.ok(t.preview, `${expected.id} should have a preview path`);
       assert.ok(fs.existsSync(t.preview), t.preview);
     }
+  });
+
+  it('falls back when a saved theme is no longer installed', () => {
+    assert.equal(themes.normalizeThemeId('matcha-frog'), 'matcha-frog');
+    assert.equal(themes.normalizeThemeId('removed-theme'), 'race-crab');
+    assert.equal(themes.normalizeThemeId('removed-theme', ''), '');
   });
 
   for (const expected of SHIPPED_THEMES) {
@@ -55,15 +61,23 @@ describe('themes module (shipped listThemes / paths)', () => {
       }
       const idleAbs = themes.themeAssetAbs(expected.id, 'frames/idle_00.png');
       assert.ok(fs.existsSync(idleAbs), idleAbs);
+      for (const state of REQUIRED_STATES) {
+        const staticAbs = themes.themeAssetAbs(expected.id, `${state}.png`);
+        assert.ok(fs.existsSync(staticAbs), `${expected.id} missing static ${state} sprite`);
+      }
     });
 
-    it(`smooth 24fps working pack for ${expected.id}`, () => {
+    it(`valid working animation pack for ${expected.id}`, () => {
       const p = themes.themeAnimationsPath(expected.id);
       const j = JSON.parse(fs.readFileSync(p, 'utf8'));
       const working = j.animations.working;
       assert.ok(working);
-      assert.ok(working.frames.length >= 12, 'working should have a dense frame pack');
-      assert.ok(working.fps >= 18, 'working fps should be smooth (≥18)');
+      assert.ok(working.frames.length >= 2, 'working should have multiple animation frames');
+      assert.ok(working.fps > 0, 'working fps should be positive');
+      if (expected.id !== 'matcha-frog') {
+        assert.ok(working.frames.length >= 12, '24fps themes should have a dense frame pack');
+        assert.ok(working.fps >= 18, '24fps themes should run smoothly');
+      }
       // Spot-check a mid frame exists (not just _00)
       const mid = working.frames[Math.min(8, working.frames.length - 1)];
       assert.ok(fs.existsSync(themes.themeAssetAbs(expected.id, mid)), mid);

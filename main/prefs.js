@@ -10,12 +10,15 @@ const SIZE_PRESETS = {
   L: 256,
 };
 
+const ANIMATION_MODES = ['fluid', 'static'];
+
 const DEFAULTS = {
   x: null,
   y: null,
   size: 'M',
   mute: false,
   themeId: 'race-crab',
+  animationMode: 'fluid',
   /** Tray / menu-bar icon: 'grok' | 'match-pet' | theme id */
   trayIconId: 'grok',
   hooksAutoInstalled: false,
@@ -29,10 +32,17 @@ function prefsPath() {
 function load() {
   try {
     const raw = fs.readFileSync(prefsPath(), 'utf8');
-    return { ...DEFAULTS, ...JSON.parse(raw) };
+    const loaded = { ...DEFAULTS, ...JSON.parse(raw) };
+    loaded.animationMode = normalizeAnimationMode(loaded.animationMode);
+    return loaded;
   } catch {
     return { ...DEFAULTS };
   }
+}
+
+function normalizeAnimationMode(value) {
+  const mode = String(value || '').toLowerCase();
+  return ANIMATION_MODES.includes(mode) ? mode : DEFAULTS.animationMode;
 }
 
 function save(prefs) {
@@ -47,8 +57,10 @@ function sizePx(sizeKey) {
 
 module.exports = {
   SIZE_PRESETS,
+  ANIMATION_MODES,
   DEFAULTS,
   load,
   save,
   sizePx,
+  normalizeAnimationMode,
 };

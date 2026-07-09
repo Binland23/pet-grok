@@ -61,6 +61,11 @@ function loadThemeJson(themeId) {
   }
 }
 
+function normalizeThemeId(themeId, fallback = 'race-crab') {
+  const id = String(themeId || '').trim();
+  return id && loadThemeJson(id) ? id : fallback;
+}
+
 function themeAnimationsPath(themeId) {
   const id = themeId || 'race-crab';
   const candidates = [
@@ -95,6 +100,7 @@ module.exports = {
   THEMES_DIR,
   listThemes,
   loadThemeJson,
+  normalizeThemeId,
   themeAnimationsPath,
   themeAssetAbs,
 };

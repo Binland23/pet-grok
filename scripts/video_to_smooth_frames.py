@@ -24,7 +24,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "renderer" / "assets"
 
-THEMES = ["race-crab", "cloud-pup", "bubble-axolotl", "snorlax-buddy"]
+THEMES = ["race-crab", "cloud-pup", "bubble-axolotl", "matcha-frog"]
 STATES = ["idle", "thinking", "working", "done", "alert", "sleep", "wake"]
 
 # Target playback

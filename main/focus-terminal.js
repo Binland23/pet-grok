@@ -284,51 +284,110 @@ end tell
 }
 
 /**
- * Bring Windows window belonging to process tree to foreground (best-effort).
+ * Bring the Windows window hosting Grok to the foreground. Prefer the active
+ * session's process ancestry, then a visible terminal/IDE titled "grok", then
+ * the most recently started visible terminal. Every success is verified against
+ * GetForegroundWindow instead of trusting SetForegroundWindow's return blindly.
  * @param {number} pid
  */
 function focusWindowsProcess(pid) {
   return new Promise((resolve) => {
-    // PowerShell: find main window of process or parent chain and SetForegroundWindow
     const ps = `
 $ErrorActionPreference = 'SilentlyContinue'
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
-public class Win {
+public class PetGrokWindowActivator {
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+  [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+  [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool attach);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
-  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern IntPtr SetFocus(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+
+  public static bool Activate(IntPtr hWnd) {
+    if (hWnd == IntPtr.Zero) return false;
+    ShowWindowAsync(hWnd, 9);
+
+    IntPtr foreground = GetForegroundWindow();
+    uint ignored;
+    uint foregroundThread = foreground == IntPtr.Zero ? 0 : GetWindowThreadProcessId(foreground, out ignored);
+    uint targetThread = GetWindowThreadProcessId(hWnd, out ignored);
+    uint currentThread = GetCurrentThreadId();
+    bool attachedCurrent = currentThread != targetThread && AttachThreadInput(currentThread, targetThread, true);
+    bool attachedForeground = foregroundThread != 0 && foregroundThread != targetThread && AttachThreadInput(foregroundThread, targetThread, true);
+
+    BringWindowToTop(hWnd);
+    bool requested = SetForegroundWindow(hWnd);
+    SetFocus(hWnd);
+
+    if (attachedForeground) AttachThreadInput(foregroundThread, targetThread, false);
+    if (attachedCurrent) AttachThreadInput(currentThread, targetThread, false);
+    return requested || GetForegroundWindow() == hWnd;
+  }
 }
 "@
 function Get-Parent($p) {
   try { (Get-CimInstance Win32_Process -Filter "ProcessId=$p").ParentProcessId } catch { 0 }
 }
-$pid = ${Number(pid) || 0}
+$sessionPid = ${Number(pid) || 0}
 $chain = @()
-$p = $pid
+$p = $sessionPid
 for ($i=0; $i -lt 12 -and $p -gt 0; $i++) {
   $chain += $p
   $p = Get-Parent $p
 }
+
+$candidates = @()
 foreach ($procId in $chain) {
   $proc = Get-Process -Id $procId -ErrorAction SilentlyContinue
   if ($proc -and $proc.MainWindowHandle -ne [IntPtr]::Zero) {
-    $h = $proc.MainWindowHandle
-    if ([Win]::IsIconic($h)) { [Win]::ShowWindow($h, 9) | Out-Null }
-    [Win]::SetForegroundWindow($h) | Out-Null
-    "ok:$($proc.ProcessName)"
+    $candidates += [pscustomobject]@{ Process=$proc; Strategy='process-tree'; Score=300 }
+  }
+}
+
+$terminalNames = @('WindowsTerminal','wezterm-gui','wezterm','alacritty','kitty','mintty','Code','Cursor','pwsh','powershell','cmd','conhost')
+foreach ($name in $terminalNames) {
+  foreach ($proc in @(Get-Process -Name $name -ErrorAction SilentlyContinue)) {
+    if ($proc.MainWindowHandle -eq [IntPtr]::Zero) { continue }
+    $score = 100
+    if ($proc.MainWindowTitle -match '(?i)\\bgrok\\b') { $score += 150 }
+    $candidates += [pscustomobject]@{ Process=$proc; Strategy='terminal-fallback'; Score=$score }
+  }
+}
+
+$seen = @{}
+$ordered = $candidates | Sort-Object -Property @{Expression='Score';Descending=$true}, @{Expression={ $_.Process.StartTime };Descending=$true}
+foreach ($candidate in $ordered) {
+  $proc = $candidate.Process
+  $h = [IntPtr]$proc.MainWindowHandle
+  $key = $h.ToInt64()
+  if ($seen.ContainsKey($key)) { continue }
+  $seen[$key] = $true
+
+  $ok = [PetGrokWindowActivator]::Activate($h)
+  if (-not $ok) {
+    try {
+      $shell = New-Object -ComObject WScript.Shell
+      $null = $shell.AppActivate($proc.Id)
+      Start-Sleep -Milliseconds 80
+      $ok = [PetGrokWindowActivator]::GetForegroundWindow() -eq $h
+    } catch { $ok = $false }
+  }
+  if ($ok -and [PetGrokWindowActivator]::GetForegroundWindow() -eq $h) {
+    [pscustomobject]@{
+      ok=$true
+      process=$proc.ProcessName
+      pid=$proc.Id
+      title=$proc.MainWindowTitle
+      strategy=$candidate.Strategy
+    } | ConvertTo-Json -Compress
     exit 0
   }
 }
-# Fallback: Windows Terminal
-$wt = Get-Process -Name WindowsTerminal -ErrorAction SilentlyContinue | Select-Object -First 1
-if ($wt -and $wt.MainWindowHandle -ne [IntPtr]::Zero) {
-  [Win]::SetForegroundWindow($wt.MainWindowHandle) | Out-Null
-  "ok:WindowsTerminal"
-  exit 0
-}
-"not-found"
+[pscustomobject]@{ ok=$false; error='no-focusable-terminal-window' } | ConvertTo-Json -Compress
 `;
     execFile(
       'powershell.exe',
@@ -339,7 +398,11 @@ if ($wt -and $wt.MainWindowHandle -ne [IntPtr]::Zero) {
           resolve({ ok: false, error: (stderr || err.message || '').trim() });
         } else {
           const out = String(stdout || '').trim();
-          resolve({ ok: out.startsWith('ok'), out });
+          try {
+            resolve(JSON.parse(out.split(/\r?\n/).filter(Boolean).pop() || '{}'));
+          } catch {
+            resolve({ ok: false, error: out || 'invalid-focus-response' });
+          }
         }
       }
     );
@@ -348,10 +411,18 @@ if ($wt -and $wt.MainWindowHandle -ne [IntPtr]::Zero) {
 
 /**
  * Focus terminal hosting active Grok session.
- * @param {{ sessionsPath?: string }} [opts]
+ * @param {{
+ *   sessionsPath?: string,
+ *   platform?: string,
+ *   processExistsFn?: (pid: number) => boolean,
+ *   focusWindowsFn?: (pid: number) => Promise<object>,
+ * }} [opts]
  * @returns {Promise<{ ok: boolean, reason?: string, session?: object, host?: object }>}
  */
 async function focusActiveGrokTerminal(opts = {}) {
+  const platformName = opts.platform || process.platform;
+  const processExistsFn = opts.processExistsFn || processExists;
+  const focusWindowsFn = opts.focusWindowsFn || focusWindowsProcess;
   let sessions = readActiveSessions();
   if (opts.sessionsPath) {
     try {
@@ -361,17 +432,36 @@ async function focusActiveGrokTerminal(opts = {}) {
     }
   }
   const session = pickActiveSession(sessions);
+
+  // Windows session metadata can be briefly missing or stale because Grok's
+  // launcher process exits while Windows Terminal stays open. A visible terminal
+  // titled "grok" is therefore a valid, and often more accurate, fallback.
+  if (platformName === 'win32') {
+    const sessionPid = session && session.pid ? session.pid : 0;
+    const sessionLive = processExistsFn(sessionPid);
+    const host = sessionLive
+      ? resolveTerminalHost(sessionPid)
+      : { app: '', tty: '', terminalPid: 0 };
+    const r = await focusWindowsFn(sessionLive ? sessionPid : 0);
+    return {
+      ok: !!r.ok,
+      reason: r.ok ? `${r.strategy}:${r.process}` : r.error || 'not-found',
+      ...(session ? { session } : {}),
+      host,
+    };
+  }
+
   if (!session || !session.pid) {
     return { ok: false, reason: 'no-active-session' };
   }
-  if (!processExists(session.pid)) {
+  if (!processExistsFn(session.pid)) {
     return { ok: false, reason: 'session-process-dead', session };
   }
 
   const host = resolveTerminalHost(session.pid);
   console.log('[focus-terminal]', { session, host });
 
-  if (process.platform === 'darwin') {
+  if (platformName === 'darwin') {
     if (host.app === 'Terminal') {
       const r = await focusMacTerminalApp(host.tty);
       return { ok: r.ok, reason: r.ok ? 'terminal-tab' : r.error, session, host };
@@ -392,11 +482,6 @@ async function focusActiveGrokTerminal(opts = {}) {
     return { ok: false, reason: 'no-terminal-host', session, host };
   }
 
-  if (process.platform === 'win32') {
-    const r = await focusWindowsProcess(session.pid);
-    return { ok: r.ok, reason: r.ok ? r.out : r.error || 'not-found', session, host };
-  }
-
   // Linux: best-effort wmctrl / xdotool not always available
   return { ok: false, reason: 'unsupported-platform', session, host };
 }
@@ -409,5 +494,6 @@ module.exports = {
   parentChain,
   getTty,
   resolveTerminalHost,
+  focusWindowsProcess,
   focusActiveGrokTerminal,
 };

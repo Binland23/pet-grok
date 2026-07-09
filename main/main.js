@@ -50,7 +50,17 @@ if (!gotLock) {
 }
 
 function getState() {
-  if (!state) state = prefs.load();
+  if (!state) {
+    state = prefs.load();
+    state.themeId = themes.normalizeThemeId(state.themeId);
+    if (
+      state.trayIconId !== 'grok' &&
+      state.trayIconId !== 'match-pet' &&
+      themes.normalizeThemeId(state.trayIconId, '') === ''
+    ) {
+      state.trayIconId = 'grok';
+    }
+  }
   return state;
 }
 
@@ -506,6 +516,7 @@ function buildDashboardSnapshot() {
   return {
     size: s.size || 'M',
     mute: !!s.mute,
+    animationMode: prefs.normalizeAnimationMode(s.animationMode),
     visible: s.visible !== false,
     themeId: s.themeId || 'race-crab',
     themeName: theme.name || s.themeId || 'Pet',
@@ -540,6 +551,9 @@ function applySettingsPatch(patch) {
     s.size = String(patch.size);
   }
   if (typeof patch.mute === 'boolean') s.mute = patch.mute;
+  if (patch.animationMode != null) {
+    s.animationMode = prefs.normalizeAnimationMode(patch.animationMode);
+  }
   if (typeof patch.visible === 'boolean') s.visible = patch.visible;
   if (patch.themeId != null && String(patch.themeId).trim()) {
     s.themeId = String(patch.themeId).trim();
@@ -563,6 +577,7 @@ function applySettingsPatch(patch) {
       mute: s.mute,
       size: s.size,
       themeId: s.themeId,
+      animationMode: prefs.normalizeAnimationMode(s.animationMode),
       trayIconId: s.trayIconId,
     });
     if (patch.themeId != null) {
@@ -661,6 +676,7 @@ function registerIpc() {
       mute: s.mute,
       size: s.size,
       themeId: s.themeId,
+      animationMode: prefs.normalizeAnimationMode(s.animationMode),
       visible: s.visible !== false,
     };
   });
