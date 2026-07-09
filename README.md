@@ -231,6 +231,29 @@ Pick pets from the **Dashboard → Pet** cards or the tray **Pet** menu.
 
 States: `idle`, `thinking`, `working`, `done`, `alert`, `sleep`, `wake` (plus optional `click`).
 
+### Smooth 24fps animations (Imagine video)
+
+Shipped pets use **24fps** frame packs extracted from Imagine `image_to_video` clips (not the old ~9fps sparse poses). The pet renderer loads **every** frame and prefers `fps` from `animations.json`.
+
+Pipeline:
+
+1. Composite theme sprites onto a solid black background (video-friendly).
+2. Generate a 6s clip per state with Imagine video (fixed camera, subtle motion).
+3. Place videos at `renderer/assets/<id>/videos/<state>.mp4`.
+4. Extract transparent 256×256 frames:
+
+```bash
+python3 scripts/video_to_smooth_frames.py <theme-id>
+# or all themes that have videos/
+python3 scripts/video_to_smooth_frames.py --all
+```
+
+If a state cannot be video-generated (rate limit / moderation), upsample the old keyframes:
+
+```bash
+python3 scripts/interpolate_smooth_frames.py <theme-id> <state>
+```
+
 ## Project layout
 
 ```

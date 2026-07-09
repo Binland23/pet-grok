@@ -1,6 +1,5 @@
 node_modules/
-dist/
-*.log
 .DS_Store
-Thumbs.db
-mcps/
+# Intermediate Imagine video work (black-bg sources, frame id dumps)
+renderer/assets/_video_work/
+*.log

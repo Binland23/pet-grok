@@ -1,7 +1,7 @@
 {
   "id": "cloud-pup",
   "name": "Cloud Pup",
-  "description": "Fluffy cloud puppy with sparkly eyes — soft, dreamy desktop buddy",
+  "description": "Fluffy cloud puppy with sparkly eyes \u2014 soft, dreamy desktop buddy",
   "sprites": {
     "idle": "sprites/idle.png",
     "thinking": "sprites/thinking.png",
@@ -12,6 +12,6 @@
     "wake": "sprites/wake.png"
   },
   "celebrateMs": 2500,
-  "wakeMs": 900,
+  "wakeMs": 1400,
   "idleTimeoutMs": 60000
 }

@@ -56,5 +56,17 @@ describe('themes module (shipped listThemes / paths)', () => {
       const idleAbs = themes.themeAssetAbs(expected.id, 'frames/idle_00.png');
       assert.ok(fs.existsSync(idleAbs), idleAbs);
     });
+
+    it(`smooth 24fps working pack for ${expected.id}`, () => {
+      const p = themes.themeAnimationsPath(expected.id);
+      const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+      const working = j.animations.working;
+      assert.ok(working);
+      assert.ok(working.frames.length >= 12, 'working should have a dense frame pack');
+      assert.ok(working.fps >= 18, 'working fps should be smooth (≥18)');
+      // Spot-check a mid frame exists (not just _00)
+      const mid = working.frames[Math.min(8, working.frames.length - 1)];
+      assert.ok(fs.existsSync(themes.themeAssetAbs(expected.id, mid)), mid);
+    });
   }
 });

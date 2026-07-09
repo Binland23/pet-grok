@@ -1,7 +1,7 @@
 {
   "id": "race-crab",
   "name": "Hermit Crab",
-  "description": "Round kawaii hermit crab with a soft shell — classic desktop buddy",
+  "description": "Round kawaii hermit crab with a soft shell \u2014 classic desktop buddy",
   "sprites": {
     "idle": "sprites/idle.png",
     "thinking": "sprites/thinking.png",
@@ -12,6 +12,6 @@
     "wake": "sprites/wake.png"
   },
   "celebrateMs": 2500,
-  "wakeMs": 900,
+  "wakeMs": 1400,
   "idleTimeoutMs": 60000
 }

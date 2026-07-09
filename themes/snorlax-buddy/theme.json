@@ -1,7 +1,7 @@
 {
   "id": "snorlax-buddy",
   "name": "Snorlax Buddy",
-  "description": "Chubby teal doze-buddy with a cream belly — Snorlax-inspired nap energy",
+  "description": "Chubby teal doze-buddy with a cream belly \u2014 Snorlax-inspired nap energy",
   "sprites": {
     "idle": "sprites/idle.png",
     "thinking": "sprites/thinking.png",
@@ -12,6 +12,6 @@
     "wake": "sprites/wake.png"
   },
   "celebrateMs": 2500,
-  "wakeMs": 1100,
+  "wakeMs": 1400,
   "idleTimeoutMs": 60000
 }
