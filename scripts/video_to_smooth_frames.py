@@ -5,7 +5,7 @@ Usage:
   python3 scripts/video_to_smooth_frames.py <theme-id> [--states idle,working,...]
   python3 scripts/video_to_smooth_frames.py --all
 
-Reads videos from renderer/assets/<theme>/videos/<state>.mp4, writes
+Reads local source videos from media-src/<theme>/<state>.mp4, writes
 frames under renderer/assets/<theme>/frames/ and rewrites animations.json
 with fps=24 (smooth). Keeps a short loop (~2s for looping states).
 """
@@ -23,6 +23,7 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "renderer" / "assets"
+MEDIA_SRC = ROOT / "media-src"
 
 THEMES = ["race-crab", "cloud-pup", "bubble-axolotl", "matcha-frog"]
 STATES = ["idle", "thinking", "working", "done", "alert", "sleep", "wake"]
@@ -106,7 +107,7 @@ def extract_frames(video: Path, out_dir: Path, seconds: float, fps: int = FPS) -
 
 def process_state(theme: str, state: str, dry_run: bool = False) -> dict:
     theme_dir = ASSETS / theme
-    video = theme_dir / "videos" / f"{state}.mp4"
+    video = MEDIA_SRC / theme / f"{state}.mp4"
     if not video.is_file():
         raise FileNotFoundError(f"Missing video: {video}")
 
@@ -135,7 +136,7 @@ def process_state(theme: str, state: str, dry_run: bool = False) -> dict:
             "frames": rels,
             "fps": FPS,
             "loop": LOOP.get(state, True),
-            "source": f"videos/{state}.mp4",
+            "source": f"media-src/{theme}/{state}.mp4",
             "smooth": True,
         }
 
@@ -197,7 +198,7 @@ def process_theme(theme: str, states: list[str] | None = None) -> None:
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("theme", nargs="?", help="Theme id (e.g. race-crab)")
-    ap.add_argument("--all", action="store_true", help="Process all themes that have videos/")
+    ap.add_argument("--all", action="store_true", help="Process all themes that have media-src videos")
     ap.add_argument(
         "--states",
         default="",
@@ -209,9 +210,9 @@ def main(argv: list[str]) -> int:
 
     if args.all:
         for t in THEMES:
-            vdir = ASSETS / t / "videos"
+            vdir = MEDIA_SRC / t
             if not vdir.is_dir():
-                print(f"skip {t}: no videos/", flush=True)
+                print(f"skip {t}: no media-src/{t}/", flush=True)
                 continue
             have = [s for s in (states or STATES) if (vdir / f"{s}.mp4").is_file()]
             if not have:

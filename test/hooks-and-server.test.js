@@ -188,13 +188,13 @@ describe('hooks payload (real makeHooksPayload)', () => {
     assert.match(hooks.curlStateCommand('done', { platform: 'darwin' }), /^curl /);
   });
 
-  it('installHooks writes pet.json with command handlers + helper scripts', () => {
+  it('installHooks prefers curl handlers when curl is available', () => {
     const prev = hooks.isInstalled() ? fs.readFileSync(hooks.HOOK_FILE, 'utf8') : null;
     const prevScript = fs.existsSync(hooks.HOOK_SCRIPT)
       ? fs.readFileSync(hooks.HOOK_SCRIPT, 'utf8')
       : null;
     try {
-      const p = hooks.installHooks();
+      const p = hooks.installHooks({ curlAvailable: true });
       assert.equal(path.basename(p), 'pet.json');
       assert.ok(fs.existsSync(hooks.HOOK_SCRIPT), 'pet-state.js must be installed');
       assert.ok(fs.existsSync(hooks.HOOK_SH_RUNNER), 'pet-run.sh must be installed');
@@ -202,10 +202,10 @@ describe('hooks payload (real makeHooksPayload)', () => {
       const h = written.hooks.UserPromptSubmit[0].hooks[0];
       assert.equal(h.type, 'command');
       assert.equal(h.async, true);
-      assert.match(String(h.command), /pet-state\.js/);
+      assert.match(String(h.command), /^curl(?:\.exe)? /);
       assert.match(String(h.command), /thinking/);
       // Absolute path — not relative ./pet-run.sh
-      assert.doesNotMatch(String(h.command), /^\.\/pet-run/);
+      assert.doesNotMatch(String(h.command), /pet-state\.js/);
       assert.ok(written.hooks.PreToolUse);
       assert.ok(written.hooks.Stop);
     } finally {

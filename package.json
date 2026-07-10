@@ -17,6 +17,19 @@
   ],
   "author": "",
   "license": "MIT",
+  "build": {
+    "files": [
+      "main/**",
+      "preload/**",
+      "renderer/**",
+      "themes/**",
+      "assets/**",
+      "package.json",
+      "!renderer/assets/**/videos/**",
+      "!renderer/assets/**/_video_work/**",
+      "!media-src/**"
+    ]
+  },
   "devDependencies": {
     "electron": "^43.1.0"
   }

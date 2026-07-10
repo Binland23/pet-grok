@@ -163,6 +163,27 @@ function curlStateCommand(state, opts = {}) {
   return `${bin} -s -X POST ${HOST}:${PORT}/state -d ${state}`;
 }
 
+/** Determine whether curl can service hooks without a Node cold start. */
+function isCurlAvailable(opts = {}) {
+  if (typeof opts.curlAvailable === 'boolean') return opts.curlAvailable;
+  const platform = opts.platform || process.platform;
+  try {
+    execSync(platform === 'win32' ? 'where curl.exe' : 'command -v curl', {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function preferredHookMode(opts = {}) {
+  if (opts.mode) return opts.mode;
+  if (opts.forceCurl) return 'curl';
+  return isCurlAvailable(opts) ? 'curl' : 'command';
+}
+
 /**
  * Default: command hooks (absolute node → pet-state.js → state server).
  * Shape mirrors Clawd hooks that Grok successfully loads from Claude settings.
@@ -179,7 +200,7 @@ function curlStateCommand(state, opts = {}) {
  * }} [opts]
  */
 function makeHooksPayload(opts = {}) {
-  const mode = opts.mode || (opts.forceCurl ? 'curl' : 'command');
+  const mode = preferredHookMode(opts);
   const hookUrl = opts.hookUrl || HOOK_URL;
   /** @type {Record<string, unknown>} */
   const hooks = {};
@@ -292,7 +313,7 @@ function installHooks(opts = {}) {
   const nodeBin = opts.nodeBin || resolveNodeBinary({ platform });
   installHookScript({ platform, nodeBin });
   const payload = makeHooksPayload({
-    mode: opts.mode || 'command',
+    mode: preferredHookMode(opts),
     nodeBin,
     scriptPath: HOOK_SCRIPT,
     runnerPath: HOOK_RUNNER,
@@ -351,6 +372,8 @@ module.exports = {
   quoteForShell,
   stateCommand,
   curlStateCommand,
+  isCurlAvailable,
+  preferredHookMode,
   makeHooksPayload,
   isInstalled,
   installHookScript,

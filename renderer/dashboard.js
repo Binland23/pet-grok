@@ -27,6 +27,8 @@
 
   /** @type {boolean} */
   let settingState = false;
+  let petsSignature = '';
+  let trayIconsSignature = '';
 
   function toast(msg) {
     const el = document.getElementById('toast');
@@ -34,13 +36,6 @@
     el.classList.add('show');
     clearTimeout(toast._t);
     toast._t = setTimeout(() => el.classList.remove('show'), 1800);
-  }
-
-  function pathToFileUrl(abs) {
-    if (!abs) return '';
-    // main already may send file URL; if path, encode lightly
-    if (String(abs).startsWith('file:')) return abs;
-    return 'file://' + String(abs).replace(/\\/g, '/');
   }
 
   function renderStatus() {
@@ -188,36 +183,48 @@
     const current = (snap && snap.themeId) || 'race-crab';
     if (!themes.length) {
       root.innerHTML = '<p class="hint">No themes found under themes/.</p>';
+      petsSignature = '';
       return;
     }
-    root.innerHTML = themes
-      .map((t) => {
-        const selected = t.id === current ? 'selected' : '';
-        const badge = t.id === current ? '<span class="badge">Active</span>' : '';
-        const img = t.previewUrl
-          ? `<img src="${escapeHtml(t.previewUrl)}" alt="" />`
-          : '<span style="color:#8fa3bb;font-size:11px">No preview</span>';
-        return `
-          <button type="button" class="pet-card ${selected}" data-theme="${escapeHtml(t.id)}">
-            ${badge}
-            <div class="thumb">${img}</div>
-            <div class="name">${escapeHtml(t.name)}</div>
-            <div class="desc">${escapeHtml(t.description || t.id)}</div>
-          </button>`;
-      })
-      .join('');
+    const signature = JSON.stringify(
+      themes.map((t) => [t.id, t.name, t.description || '', t.previewUrl || ''])
+    );
+    if (signature !== petsSignature) {
+      petsSignature = signature;
+      root.innerHTML = themes
+        .map((t) => {
+          const img = t.previewUrl
+            ? `<img src="${escapeHtml(t.previewUrl)}" alt="" />`
+            : '<span style="color:#8fa3bb;font-size:11px">No preview</span>';
+          return `
+            <button type="button" class="pet-card" data-theme="${escapeHtml(t.id)}" aria-selected="false">
+              <span class="badge" hidden>Active</span>
+              <div class="thumb">${img}</div>
+              <div class="name">${escapeHtml(t.name)}</div>
+              <div class="desc">${escapeHtml(t.description || t.id)}</div>
+            </button>`;
+        })
+        .join('');
 
-    root.querySelectorAll('[data-theme]').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        const id = btn.getAttribute('data-theme');
-        try {
-          snap = await api.setTheme(id);
-          renderAll();
-          toast('Pet updated');
-        } catch (e) {
-          toast('Could not switch pet');
-        }
+      root.querySelectorAll('[data-theme]').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const id = btn.getAttribute('data-theme');
+          try {
+            snap = await api.setTheme(id);
+            renderAll();
+            toast('Pet updated');
+          } catch (e) {
+            toast('Could not switch pet');
+          }
+        });
       });
+    }
+    root.querySelectorAll('[data-theme]').forEach((btn) => {
+      const selected = btn.getAttribute('data-theme') === current;
+      btn.classList.toggle('selected', selected);
+      btn.setAttribute('aria-selected', selected ? 'true' : 'false');
+      const badge = btn.querySelector('.badge');
+      if (badge) badge.hidden = !selected;
     });
   }
 
@@ -250,12 +257,24 @@
     const current = (snap && snap.trayIconId) || 'grok';
     if (!options.length) {
       root.innerHTML = '<p class="hint">No tray icons available.</p>';
+      trayIconsSignature = '';
       return;
     }
-    root.innerHTML = options
+    const signature = JSON.stringify(
+      options.map((opt) => [
+        opt.id,
+        opt.name,
+        opt.description || '',
+        opt.previewUrl || '',
+        opt.kind || 'pet',
+      ])
+    );
+    if (signature !== trayIconsSignature) {
+      trayIconsSignature = signature;
+      root.innerHTML = options
       .map((opt) => {
         const selected = opt.id === current ? 'selected' : '';
-        const badge = opt.id === current ? '<span class="badge">Active</span>' : '';
+        const badge = '<span class="badge" hidden>Active</span>';
         const kind = opt.kind || 'pet';
         const img = opt.previewUrl
           ? `<img src="${escapeHtml(opt.previewUrl)}" alt="" />`
@@ -270,17 +289,25 @@
       })
       .join('');
 
-    root.querySelectorAll('[data-tray]').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        const id = btn.getAttribute('data-tray');
-        try {
-          snap = await api.applySettings({ trayIconId: id });
-          renderAll();
-          toast('Tray icon updated');
-        } catch (e) {
-          toast('Could not update tray icon');
-        }
+      root.querySelectorAll('[data-tray]').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const id = btn.getAttribute('data-tray');
+          try {
+            snap = await api.applySettings({ trayIconId: id });
+            renderAll();
+            toast('Tray icon updated');
+          } catch (e) {
+            toast('Could not update tray icon');
+          }
+        });
       });
+    }
+    root.querySelectorAll('[data-tray]').forEach((btn) => {
+      const selected = btn.getAttribute('data-tray') === current;
+      btn.classList.toggle('selected', selected);
+      btn.setAttribute('aria-selected', selected ? 'true' : 'false');
+      const badge = btn.querySelector('.badge');
+      if (badge) badge.hidden = !selected;
     });
   }
 
@@ -367,4 +394,3 @@
       '<span class="pill bad"><span class="dot"></span> ' + escapeHtml(err.message || 'Load failed') + '</span>';
   });
 })();
-  

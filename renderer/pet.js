@@ -36,11 +36,19 @@
 
   /** @type {Record<string, {frames: HTMLImageElement[], loop: boolean, loopMode: string, fps: number}>} */
   let anims = {};
+  /** Manifest definitions remain lightweight; image frames are decoded on demand. */
+  let animationDefs = {};
+  let assetBaseUrl = ASSET;
+  let stateLoadPromises = {};
   let current = 'idle';
   let frameIndex = 0;
   let frameDirection = 1;
   let frameAcc = 0;
   let lastTs = performance.now();
+  let renderTimer = null;
+  let renderRaf = null;
+  let renderStarted = false;
+  let renderDirty = true;
   let celebrateTimer = null;
   let wakeTimer = null;
   let clickTimer = null;
@@ -71,6 +79,7 @@
    */
   let loadedPackMode = null;
   let packLoadGen = 0;
+  let stateRequestGen = 0;
   /** @type {AudioContext|null} */
   let audioCtx = null;
 
@@ -200,12 +209,12 @@
     frameAcc = 0;
   }
 
-  async function resolveAssetSrc(rel) {
-    let src = ASSET + rel;
-    if (api && api.assetPath) {
-      try { src = await api.assetPath(rel); } catch (_) { src = ASSET + rel; }
+  function resolveAssetSrc(rel) {
+    try {
+      return new URL(String(rel || '').replace(/^\/+/, ''), assetBaseUrl).href;
+    } catch (_) {
+      return ASSET + rel;
     }
-    return src;
   }
 
   /** Active pack mode from the dashboard toggle (not overridden by manual lock). */
@@ -219,11 +228,17 @@
    * static → animations-static.json + frames-static/ (classic low-fps sprites)
    * @param {'fluid' | 'static'} [mode]
    */
-  async function loadAnimations(mode = desiredPackMode()) {
+  async function loadAnimationManifest(mode = desiredPackMode()) {
     const packMode = mode === 'static' ? 'static' : 'fluid';
     let meta = null;
-    if (api && api.getAnimations) {
-      meta = await api.getAnimations(packMode);
+    let base = ASSET;
+    if (api) {
+      const [manifestResult, baseResult] = await Promise.all([
+        api.getAnimations ? api.getAnimations(packMode) : Promise.resolve(null),
+        api.assetBase ? api.assetBase() : Promise.resolve(ASSET),
+      ]);
+      meta = manifestResult;
+      if (baseResult) base = baseResult;
     }
     if (!meta) {
       const file =
@@ -246,19 +261,16 @@
         : packMode === 'static'
           ? 8
           : 24;
-    const out = {};
+    const defs = {};
     for (const [state, def] of Object.entries(meta.animations || {})) {
       // Manifest already points at frames/ or frames-static/; use as-is.
       const list = framePathsForMode(state, def.frames, packMode, def.frames);
       if (!list.length) continue;
-      const frames = await Promise.all(
-        list.map(async (rel) => loadImage(await resolveAssetSrc(rel)))
-      );
       const fps = typeof def.fps === 'number' && def.fps > 0
         ? def.fps
         : (MOTION[state] && MOTION[state].fps) || defaultFps;
-      out[state] = {
-        frames,
+      defs[state] = {
+        paths: list.slice(),
         loop: def.loop !== false,
         // Classic static packs are short pose cycles — restart reads well;
         // fluid packs prefer ping-pong for seamless long loops.
@@ -272,27 +284,63 @@
         fps,
       };
     }
-    if (!out.wake && out.idle) {
-      out.wake = { frames: out.idle.frames.slice(), loop: false, loopMode: 'restart', fps: out.idle.fps };
+    if (!defs.wake && defs.idle) {
+      defs.wake = { ...defs.idle, paths: defs.idle.paths.slice(), loop: false, loopMode: 'restart' };
     }
-    if (!out.idle && out.thinking) out.idle = out.thinking;
-    // Click ack: reuse alert/wake/idle frames if theme has no dedicated click anim
-    if (!out.click) {
-      const frames = [];
-      if (out.alert && out.alert.frames[0]) frames.push(out.alert.frames[0]);
-      if (out.alert && out.alert.frames[1]) frames.push(out.alert.frames[1]);
-      if (out.wake && out.wake.frames[0]) frames.push(out.wake.frames[0]);
-      if (out.idle && out.idle.frames[0]) frames.push(out.idle.frames[0]);
-      if (frames.length) {
-        out.click = {
+    if (!defs.idle && defs.thinking) defs.idle = { ...defs.thinking, paths: defs.thinking.paths.slice() };
+    return { defs, base };
+  }
+
+  /** Decode one state's frames the first time that state is requested. */
+  async function ensureStateAnimation(state) {
+    if (anims[state]) return anims[state];
+    if (stateLoadPromises[state]) return stateLoadPromises[state];
+    const gen = packLoadGen;
+    const def = animationDefs[state];
+    const promise = (async () => {
+      if (def) {
+        const frames = await Promise.all(def.paths.map((rel) => loadImage(resolveAssetSrc(rel))));
+        if (gen !== packLoadGen) return null;
+        const loaded = {
           frames,
-          loop: false,
-          loopMode: 'restart',
-          fps: (MOTION.click && MOTION.click.fps) || 10,
+          loop: def.loop,
+          loopMode: def.loopMode,
+          fps: def.fps,
         };
+        anims[state] = loaded;
+        return loaded;
       }
+
+      // Click ack has no manifest entry in most themes. Decode only the small
+      // set of source states it borrows from, and retain those shared images.
+      if (state === 'click') {
+        await Promise.all(['alert', 'wake', 'idle'].map((name) => ensureStateAnimation(name)));
+        if (gen !== packLoadGen) return null;
+        const out = anims;
+        const frames = [];
+        if (out.alert && out.alert.frames[0]) frames.push(out.alert.frames[0]);
+        if (out.alert && out.alert.frames[1]) frames.push(out.alert.frames[1]);
+        if (out.wake && out.wake.frames[0]) frames.push(out.wake.frames[0]);
+        if (out.idle && out.idle.frames[0]) frames.push(out.idle.frames[0]);
+        if (frames.length) {
+          const loaded = {
+            frames,
+            loop: false,
+            loopMode: 'restart',
+            fps: (MOTION.click && MOTION.click.fps) || 10,
+          };
+          anims.click = loaded;
+          return loaded;
+        }
+      }
+      return null;
+    })();
+    stateLoadPromises[state] = promise;
+    try {
+      return await promise;
+    } finally {
+      if (stateLoadPromises[state] === promise) delete stateLoadPromises[state];
     }
-    return out;
   }
 
   /**
@@ -301,14 +349,23 @@
    */
   async function ensureAnimationPacks() {
     const want = desiredPackMode();
-    if (loadedPackMode === want && anims && Object.keys(anims).length) {
+    if (loadedPackMode === want && Object.keys(animationDefs).length && anims.idle) {
       return false;
     }
     const gen = ++packLoadGen;
-    const next = await loadAnimations(want);
+    // Release decoded images from the previous theme/mode before loading more.
+    anims = {};
+    animationDefs = {};
+    stateLoadPromises = {};
+    assetBaseUrl = ASSET;
+    loadedPackMode = null;
+    const next = await loadAnimationManifest(want);
     if (gen !== packLoadGen) return false;
-    anims = next;
+    animationDefs = next.defs;
+    assetBaseUrl = next.base || ASSET;
     loadedPackMode = want;
+    await ensureStateAnimation('idle');
+    if (gen !== packLoadGen) return false;
     return true;
   }
 
@@ -328,6 +385,7 @@
   function setState(next, options = {}) {
     if (!next) return;
     next = String(next).toLowerCase();
+    const requestGen = options._requestGen || ++stateRequestGen;
     // sticky: true from dashboard manual lock; sticky: false clears it.
     // Omit sticky (hook / internal transitions) to leave the flag alone unless
     // this is a normal auto payload that should exit sticky — handled by
@@ -338,10 +396,34 @@
 
     // If fluid/static packs are still loading (mode toggle), wait then re-apply.
     if (desiredPackMode() !== loadedPackMode) {
-      const pending = { next, options: Object.assign({}, options, { sticky: stickyHold, force: true }) };
+      const pending = {
+        next,
+        options: Object.assign({}, options, {
+          _requestGen: requestGen,
+          sticky: stickyHold,
+          force: true,
+        }),
+      };
       ensureAnimationPacks()
-        .then(() => setState(pending.next, pending.options))
+        .then(() => {
+          if (requestGen === stateRequestGen) setState(pending.next, pending.options);
+        })
         .catch((err) => console.error('[anim packs]', err));
+      return;
+    }
+
+    if (!anims[next]) {
+      ensureStateAnimation(next)
+        .then((loaded) => {
+          if (requestGen !== stateRequestGen) return;
+          setState(loaded ? next : 'idle', {
+            ...options,
+            _requestGen: requestGen,
+            sticky: stickyHold,
+            force: true,
+          });
+        })
+        .catch((err) => console.error('[state frames]', next, err));
       return;
     }
 
@@ -500,12 +582,56 @@
       scheduleHold(name);
     }
     setStatus(name);
+    markDirty();
     console.log('[pet] applied state', name, 'frames=', (anims[name] && anims[name].frames.length) || 0, 'sticky=', stickyHold);
   }
 
+  function stopRenderLoop() {
+    if (renderTimer != null) clearTimeout(renderTimer);
+    if (renderRaf != null) cancelAnimationFrame(renderRaf);
+    renderTimer = null;
+    renderRaf = null;
+  }
+
+  function scheduleDraw(delayMs = 0) {
+    if (!renderStarted || document.hidden || renderTimer != null || renderRaf != null) return;
+    renderTimer = setTimeout(() => {
+      renderTimer = null;
+      if (document.hidden) return;
+      renderRaf = requestAnimationFrame(draw);
+    }, Math.max(0, delayMs));
+  }
+
+  function markDirty() {
+    renderDirty = true;
+    if (!renderStarted || document.hidden) return;
+    if (renderTimer != null) {
+      clearTimeout(renderTimer);
+      renderTimer = null;
+    }
+    scheduleDraw(0);
+  }
+
+  function nextDrawDelay(p, anim) {
+    if (!anim || !anim.frames.length) return 500;
+    // Transform effects are intentionally capped below display refresh rate.
+    if (current === 'idle' || current === 'click' || clickPulse > 0) return 1000 / 30;
+    if (!p.static && mode === 'play') return Math.max(16, 1000 / Math.max(1, p.fps));
+    if (!p.static && mode === 'hold' && Number.isFinite(holdLeft) && holdLeft < 1e8) {
+      return Math.max(16, Math.min(250, holdLeft * 1000));
+    }
+    return 500;
+  }
+
   function draw(ts) {
-    const dt = Math.min(0.05, (ts - lastTs) / 1000);
+    renderRaf = null;
+    // Low-fps states (notably sleep at 1.5fps) are timer-paced, so preserve
+    // their elapsed interval instead of applying the old per-vsync 50ms cap.
+    const dt = Math.min(1, (ts - lastTs) / 1000);
     lastTs = ts;
+    const previousFrame = frameIndex;
+    const previousMode = mode;
+    const previousPulse = clickPulse;
 
     if (clickPulse > 0) {
       clickPulse = Math.max(0, clickPulse - dt * 2.4);
@@ -568,47 +694,57 @@
         frameIndex = 0;
       }
 
-      const img = anim.frames[Math.min(frameIndex, anim.frames.length - 1)];
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const visualMotion = current === 'idle' || current === 'click' || clickPulse > 0;
+      const shouldRender =
+        renderDirty ||
+        visualMotion ||
+        frameIndex !== previousFrame ||
+        mode !== previousMode ||
+        clickPulse !== previousPulse;
+      if (shouldRender) {
+        const img = anim.frames[Math.min(frameIndex, anim.frames.length - 1)];
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      // Click bounce: quick squash/stretch
-      const bounce =
-        current === 'click' || clickPulse > 0
-          ? 1 + 0.12 * Math.sin((1 - clickPulse) * Math.PI) * Math.max(clickPulse, current === 'click' ? 0.35 : 0)
-          : 1;
+        // Click bounce: quick squash/stretch
+        const bounce =
+          current === 'click' || clickPulse > 0
+            ? 1 + 0.12 * Math.sin((1 - clickPulse) * Math.PI) * Math.max(clickPulse, current === 'click' ? 0.35 : 0)
+            : 1;
 
-      // Idle: soft continuous bob (subtle breathe / bounce)
-      let bobY = 0;
-      let idleScale = 1;
-      if (current === 'idle' && clickPulse <= 0) {
-        const phase = (ts / 1000) * IDLE_BOB_HZ * Math.PI * 2;
-        bobY = Math.sin(phase) * IDLE_BOB_PX;
-        idleScale = 1 + Math.sin(phase) * IDLE_BOB_SCALE;
+        // Idle: soft continuous bob (subtle breathe / bounce)
+        let bobY = 0;
+        let idleScale = 1;
+        if (current === 'idle' && clickPulse <= 0) {
+          const phase = (ts / 1000) * IDLE_BOB_HZ * Math.PI * 2;
+          bobY = Math.sin(phase) * IDLE_BOB_PX;
+          idleScale = 1 + Math.sin(phase) * IDLE_BOB_SCALE;
+        }
+
+        // Ground shadow stays planted; shrinks slightly when pet rises
+        const lift = Math.max(0, -bobY);
+        const shadowScale = 1 - lift * 0.025;
+        ctx.save();
+        ctx.fillStyle = 'rgba(10,20,40,0.16)';
+        ctx.beginPath();
+        ctx.ellipse(128, 238, 68 * shadowScale, 9 * shadowScale, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        // Pet transforms: pivot near feet so bob feels grounded
+        const scaleX = bounce * idleScale;
+        const scaleY = (2 - bounce) * idleScale;
+        ctx.save();
+        ctx.translate(128, 200 + bobY);
+        ctx.scale(scaleX, scaleY);
+        ctx.translate(-128, -200);
+        ctx.drawImage(img, 0, 0, 256, 256);
+        ctx.restore();
       }
-
-      // Ground shadow stays planted; shrinks slightly when pet rises
-      const lift = Math.max(0, -bobY); // positive when above rest
-      const shadowScale = 1 - lift * 0.025;
-      ctx.save();
-      ctx.fillStyle = 'rgba(10,20,40,0.16)';
-      ctx.beginPath();
-      ctx.ellipse(128, 238, 68 * shadowScale, 9 * shadowScale, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-
-      // Pet transforms: pivot near feet so bob feels grounded
-      const scaleX = bounce * idleScale;
-      const scaleY = (2 - bounce) * idleScale;
-      ctx.save();
-      ctx.translate(128, 200 + bobY);
-      ctx.scale(scaleX, scaleY);
-      ctx.translate(-128, -200);
-      ctx.drawImage(img, 0, 0, 256, 256);
-      ctx.restore();
-    } else {
+    } else if (renderDirty) {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
     }
-    requestAnimationFrame(draw);
+    renderDirty = false;
+    scheduleDraw(nextDrawDelay(p, anim));
   }
 
   function hitTest(clientX, clientY) {
@@ -702,6 +838,14 @@
   document.addEventListener('mouseleave', () => {
     if (!pointerDown && !dragging && api) { overPet = false; api.setIgnoreMouse(true); }
   });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      stopRenderLoop();
+      return;
+    }
+    lastTs = performance.now();
+    markDirty();
+  });
 
   async function init() {
     if (api) {
@@ -719,7 +863,9 @@
       console.error(err);
       setStatus('asset error');
     }
-    requestAnimationFrame(draw);
+    renderStarted = true;
+    lastTs = performance.now();
+    markDirty();
 
     if (!api) return;
 
@@ -772,4 +918,3 @@
 
   init();
 })();
-  

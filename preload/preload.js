@@ -39,8 +39,8 @@ contextBridge.exposeInMainWorld('petAPI', {
   getPushHistory() {
     return ipcRenderer.invoke('pet:get-push-history');
   },
-  assetPath(rel) {
-    return ipcRenderer.invoke('pet:asset-path', rel);
+  assetBase() {
+    return ipcRenderer.invoke('pet:asset-base');
   },
   setIgnoreMouse(ignore) {
     ipcRenderer.send('pet:set-ignore', !!ignore);

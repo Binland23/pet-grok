@@ -253,12 +253,12 @@ Pipeline:
 
 1. Composite theme sprites onto a solid black background (video-friendly).
 2. Generate a 6s clip per state with Imagine video (fixed camera, subtle motion).
-3. Place videos at `renderer/assets/<id>/videos/<state>.mp4`.
+3. Place local source videos at `media-src/<id>/<state>.mp4`. This folder is ignored so source media is never shipped with the app.
 4. Extract transparent 256×256 frames:
 
 ```bash
 python3 scripts/video_to_smooth_frames.py <theme-id>
-# or all themes that have videos/
+# or all themes that have local media-src videos
 python3 scripts/video_to_smooth_frames.py --all
 ```
 

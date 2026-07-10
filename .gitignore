@@ -2,4 +2,11 @@ node_modules/
 .DS_Store
 # Intermediate Imagine video work (black-bg sources, frame id dumps)
 renderer/assets/_video_work/
+# Source media is development-only; generated runtime frames live in renderer/assets.
+media-src/**/*.mp4
+renderer/assets/**/videos/
+# Legacy generated sheets are unused by the frame-manifest runtime.
+renderer/assets/**/spritesheet.png
+renderer/assets/**/spritesheet.json
+themes/**/sprites/spritesheet.png
 *.log

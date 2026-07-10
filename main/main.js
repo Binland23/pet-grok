@@ -19,6 +19,8 @@ const { startStateServer, ALLOWED_STATES, STATE_ALIASES } = require('./state-ser
 const platform = require('./platform');
 const themes = require('./themes');
 const { focusActiveGrokTerminal } = require('./focus-terminal');
+const { createBoundedLogger } = require('./bounded-log');
+const { debounce } = require('./debounce');
 
 const IDLE_TIMEOUT_MS = 60_000;
 
@@ -32,6 +34,7 @@ let tray = null;
 let stateServer = null;
 /** @type {NodeJS.Timeout | null} */
 let idleTimer = null;
+let suppressMovedSave = false;
 /** @type {ReturnType<typeof prefs.load> | null} */
 let state = null;
 /** @type {string} */
@@ -153,12 +156,22 @@ function pushStateLogPath() {
   }
 }
 
+const saveMovedPosition = debounce(() => {
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow._dragOffset) return;
+  const [nx, ny] = mainWindow.getPosition();
+  const st = getState();
+  st.x = nx;
+  st.y = ny;
+  prefs.save(st);
+}, 500);
+
+const pushLogger = createBoundedLogger({
+  enabled: /^(1|true|yes)$/i.test(String(process.env.PET_GROK_DEBUG_LOGS || '')),
+  filePath: pushStateLogPath,
+});
+
 function appendPushLog(line) {
-  try {
-    fs.appendFileSync(pushStateLogPath(), line + '\n', 'utf8');
-  } catch {
-    /* ignore */
-  }
+  void pushLogger.append(line);
 }
 
 /**
@@ -313,15 +326,13 @@ function createWindow() {
   });
 
   mainWindow.on('moved', () => {
-    if (!mainWindow) return;
-    const [nx, ny] = mainWindow.getPosition();
-    const st = getState();
-    st.x = nx;
-    st.y = ny;
-    prefs.save(st);
+    if (!mainWindow || mainWindow._dragOffset || suppressMovedSave) return;
+    saveMovedPosition();
   });
 
   mainWindow.on('closed', () => {
+    saveMovedPosition.cancel();
+    suppressMovedSave = false;
     mainWindow = null;
   });
 }
@@ -432,7 +443,8 @@ function listTrayIconOptions() {
       kind: 'match',
     },
   ];
-  for (const t of themes.listThemes()) {
+  const installedThemes = themes.listThemes();
+  for (const t of installedThemes) {
     options.push({
       id: t.id,
       name: t.name || t.id,
@@ -443,7 +455,7 @@ function listTrayIconOptions() {
   }
   const matchOpt = options.find((o) => o.id === TRAY_ICON_MATCH_PET);
   if (matchOpt) {
-    const current = themes.listThemes().find((t) => t.id === (getState().themeId || 'race-crab'));
+    const current = installedThemes.find((t) => t.id === (getState().themeId || 'race-crab'));
     if (current && current.preview) {
       matchOpt.previewUrl = platform.pathToAssetUrl(current.preview);
     }
@@ -789,10 +801,10 @@ function registerIpc() {
       return null;
     }
   });
-  ipcMain.handle('pet:asset-path', (e, rel) => {
+  ipcMain.handle('pet:asset-base', (e) => {
     if (!isSenderWindow(e, mainWindow)) return '';
-    const abs = themes.themeAssetAbs(getState().themeId, rel);
-    return platform.pathToAssetUrl(abs);
+    const abs = themes.themeAssetBase(getState().themeId);
+    return platform.pathToAssetUrl(abs) + '/';
   });
 
   // —— Dashboard only ——
@@ -937,11 +949,16 @@ function registerIpc() {
   ipcMain.on('pet:drag-end', (e) => {
     if (!isSenderWindow(e, mainWindow)) return;
     if (!mainWindow || mainWindow.isDestroyed()) return;
-    mainWindow._dragOffset = null;
+    saveMovedPosition.cancel();
     const size = windowSize();
     const [x, y] = mainWindow.getPosition();
     // Final clamp so any DPI drift is discarded
+    suppressMovedSave = true;
     mainWindow.setBounds({ x, y, width: size, height: size });
+    mainWindow._dragOffset = null;
+    setTimeout(() => {
+      suppressMovedSave = false;
+    }, 100);
     const s = getState();
     s.x = x;
     s.y = y;

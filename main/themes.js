@@ -6,11 +6,16 @@ const path = require('path');
 const THEMES_DIR = path.join(__dirname, '..', 'themes');
 const RENDERER_ASSETS = path.join(__dirname, '..', 'renderer', 'assets');
 
+/** Cached metadata keeps state pushes and dashboard snapshots off the disk. */
+let themesCache = null;
+const themeJsonCache = new Map();
+
 /**
  * List installed pet themes (future multi-pet picker).
  * @returns {{ id: string, name: string, description: string, preview: string|null }[]}
  */
 function listThemes() {
+  if (themesCache) return themesCache.map((theme) => ({ ...theme }));
   /** @type {{ id: string, name: string, description: string, preview: string|null }[]} */
   const out = [];
   let dirs = [];
@@ -48,7 +53,8 @@ function listThemes() {
     });
   }
   out.sort((a, b) => a.name.localeCompare(b.name));
-  return out;
+  themesCache = out;
+  return out.map((theme) => ({ ...theme }));
 }
 
 /**
@@ -83,13 +89,31 @@ function pathUnderBase(base, candidate) {
 
 function loadThemeJson(themeId) {
   const id = sanitizeThemeId(themeId) || 'race-crab';
+  if (themeJsonCache.has(id)) {
+    const cached = themeJsonCache.get(id);
+    return cached ? { ...cached } : null;
+  }
   const themePath = path.join(THEMES_DIR, id, 'theme.json');
   if (!pathUnderBase(THEMES_DIR, themePath)) return null;
   try {
-    return JSON.parse(fs.readFileSync(themePath, 'utf8'));
+    const meta = JSON.parse(fs.readFileSync(themePath, 'utf8'));
+    themeJsonCache.set(id, meta);
+    return { ...meta };
   } catch {
+    themeJsonCache.set(id, null);
     return null;
   }
+}
+
+/**
+ * Clear cached theme metadata after an installed theme changes on disk.
+ * @param {string} [themeId] omit to clear every cached theme
+ */
+function invalidateThemeCache(themeId) {
+  themesCache = null;
+  const id = sanitizeThemeId(themeId);
+  if (id) themeJsonCache.delete(id);
+  else themeJsonCache.clear();
 }
 
 function normalizeThemeId(themeId, fallback = 'race-crab') {
@@ -157,14 +181,34 @@ function themeAssetAbs(themeId, rel) {
   return pathUnderBase(fallbackBase, fallback) || path.join(fallbackBase, 'idle.png');
 }
 
+/**
+ * Base directory for renderer-owned animation assets. The renderer resolves
+ * all manifest-relative frame URLs from this one trusted directory URL.
+ * @param {string} [themeId]
+ * @returns {string}
+ */
+function themeAssetBase(themeId) {
+  const id = sanitizeThemeId(themeId) || 'race-crab';
+  const candidate = path.join(RENDERER_ASSETS, id);
+  const safe = pathUnderBase(RENDERER_ASSETS, candidate);
+  try {
+    if (safe && fs.statSync(safe).isDirectory()) return safe;
+  } catch {
+    /* use shipped fallback */
+  }
+  return path.join(RENDERER_ASSETS, 'race-crab');
+}
+
 module.exports = {
   THEMES_DIR,
   RENDERER_ASSETS,
   listThemes,
   loadThemeJson,
+  invalidateThemeCache,
   normalizeThemeId,
   sanitizeThemeId,
   pathUnderBase,
   themeAnimationsPath,
+  themeAssetBase,
   themeAssetAbs,
 };

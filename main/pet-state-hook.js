@@ -16,24 +16,36 @@ const path = require('path');
 const os = require('os');
 
 const DEBUG_LOG = path.join(os.homedir(), '.grok', 'hooks', 'pet-state.debug.log');
+const DEBUG_ENABLED = /^(1|true|yes)$/i.test(String(process.env.PET_GROK_DEBUG_LOGS || ''));
+const MAX_DEBUG_BYTES = 256 * 1024;
+const KEEP_DEBUG_BYTES = 192 * 1024;
+let debugWrites = Promise.resolve();
 
 function dbg(msg) {
-  try {
-    fs.appendFileSync(
-      DEBUG_LOG,
-      new Date().toISOString() +
-        ' ' +
-        msg +
-        ' argv=' +
-        JSON.stringify(process.argv) +
-        ' GROK_HOOK_EVENT=' +
-        String(process.env.GROK_HOOK_EVENT || '') +
-        '\n',
-      'utf8'
-    );
-  } catch {
-    /* ignore */
-  }
+  if (!DEBUG_ENABLED) return Promise.resolve();
+  const line =
+    new Date().toISOString() +
+    ' ' +
+    msg +
+    ' argv=' +
+    JSON.stringify(process.argv) +
+    ' GROK_HOOK_EVENT=' +
+    String(process.env.GROK_HOOK_EVENT || '') +
+    '\n';
+  debugWrites = debugWrites
+    .then(async () => {
+      await fs.promises.mkdir(path.dirname(DEBUG_LOG), { recursive: true });
+      await fs.promises.appendFile(DEBUG_LOG, line, 'utf8');
+      const stat = await fs.promises.stat(DEBUG_LOG);
+      if (stat.size <= MAX_DEBUG_BYTES) return;
+      const data = await fs.promises.readFile(DEBUG_LOG);
+      await fs.promises.writeFile(
+        DEBUG_LOG,
+        data.subarray(Math.max(0, data.length - KEEP_DEBUG_BYTES))
+      );
+    })
+    .catch(() => {});
+  return debugWrites;
 }
 
 /**
@@ -159,11 +171,11 @@ function startPost() {
 
   (async () => {
     const status = await post('/state', state);
-    dbg('ok status=' + status + ' state=' + state);
+    await dbg('ok status=' + status + ' state=' + state);
     // SessionStart → wake: also hit /show so a running-but-hidden pet reappears
     if (state === 'wake') {
       const showStatus = await post('/show', '');
-      dbg('show status=' + showStatus);
+      await dbg('show status=' + showStatus);
     }
     // Fail-open: exit 0 even if pet app is not running
     process.exit(0);
