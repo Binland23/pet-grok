@@ -4,9 +4,20 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('petAPI', {
   onState(callback) {
-    const handler = (_event, state) => callback(state);
+    const handler = (_event, payload) => {
+      if (payload && typeof payload === 'object' && payload.state != null) {
+        callback(String(payload.state), { sticky: !!payload.sticky });
+      } else {
+        callback(payload, {});
+      }
+    };
     ipcRenderer.on('pet:state', handler);
     return () => ipcRenderer.removeListener('pet:state', handler);
+  },
+  onStateControl(callback) {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on('pet:state-control', handler);
+    return () => ipcRenderer.removeListener('pet:state-control', handler);
   },
   onPrefs(callback) {
     const handler = (_event, prefs) => callback(prefs);
@@ -19,8 +30,11 @@ contextBridge.exposeInMainWorld('petAPI', {
   getPrefs() {
     return ipcRenderer.invoke('pet:get-prefs');
   },
-  getAnimations() {
-    return ipcRenderer.invoke('pet:get-animations');
+  /**
+   * @param {'fluid' | 'static'} [mode]
+   */
+  getAnimations(mode) {
+    return ipcRenderer.invoke('pet:get-animations', mode || 'fluid');
   },
   getPushHistory() {
     return ipcRenderer.invoke('pet:get-push-history');

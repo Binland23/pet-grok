@@ -160,6 +160,62 @@
     .pill.bad .dot { background: var(--accent); }
     .pill .mono { font-family: var(--mono); font-weight: 500; color: var(--text-muted); }
 
+    .state-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+      gap: 8px;
+    }
+    .state-btn {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      color: var(--text);
+      font: inherit;
+      font-weight: 600;
+      font-size: 12px;
+      padding: 10px 8px;
+      border-radius: 10px;
+      cursor: pointer;
+      text-transform: capitalize;
+      letter-spacing: -0.01em;
+      transition: border-color 0.15s ease, background 0.15s ease, transform 0.1s ease, color 0.15s ease;
+    }
+    .state-btn:hover {
+      border-color: rgba(255,255,255,0.22);
+      transform: translateY(-1px);
+    }
+    .state-btn:active { transform: translateY(1px); }
+    .state-btn.active {
+      border-color: var(--border-strong);
+      background: linear-gradient(180deg, rgba(255, 210, 0, 0.12), var(--surface-2));
+      color: var(--gold);
+      box-shadow: inset 0 0 0 1px rgba(255, 210, 0, 0.12);
+    }
+    .state-btn:focus-visible {
+      outline: 2px solid var(--gold);
+      outline-offset: 2px;
+    }
+    .state-btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      transform: none;
+    }
+    .state-btn.mode-auto {
+      letter-spacing: 0.04em;
+      text-transform: none;
+      font-weight: 700;
+    }
+    .state-btn.mode-auto.active {
+      border-color: rgba(61, 214, 140, 0.55);
+      background: linear-gradient(180deg, rgba(61, 214, 140, 0.14), var(--surface-2));
+      color: var(--ok);
+      box-shadow: inset 0 0 0 1px rgba(61, 214, 140, 0.12);
+    }
+    .state-btn.weee {
+      text-transform: none;
+      letter-spacing: 0.06em;
+    }
+
     .pets {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
@@ -504,6 +560,15 @@
       </div>
     </section>
 
+    <section class="card">
+      <h2>Pet state</h2>
+      <div class="state-grid" id="stateGrid" role="group" aria-label="Pet state control"></div>
+      <p class="hint" id="stateHint">
+        <strong>Auto</strong> lets Grok hooks drive the pet.
+        Pick any pose to lock it (loops in the current Fluid / Static style) until you return to Auto.
+      </p>
+    </section>
+
     <div class="grid-2">
       <section class="card">
         <h2>Pet</h2>
@@ -529,7 +594,7 @@
             <button type="button" data-animation-mode="fluid">Fluid animation</button>
             <button type="button" data-animation-mode="static">Static sprites</button>
           </div>
-          <p class="hint">Fluid uses the pet's full animation frame pack. Static uses one pose sprite per pet state.</p>
+          <p class="hint">Fluid = smooth 24fps motion packs. Static sprites = classic low-fps pose cycles (about 2–10 fps, working ~9 fps) that still animate and loop.</p>
         </div>
 
         <div class="toggle-row">
@@ -598,6 +663,25 @@
       /** @type {any} */
       let snap = null;
 
+      /**
+       * Control buttons: Auto (hooks) first, then every pose including WEEEE (click).
+       * @type {{ id: string, label: string, kind: 'auto' | 'state' }[]}
+       */
+      const PET_STATE_BUTTONS = [
+        { id: 'auto', label: 'Auto', kind: 'auto' },
+        { id: 'idle', label: 'idle', kind: 'state' },
+        { id: 'wake', label: 'wake', kind: 'state' },
+        { id: 'thinking', label: 'thinking', kind: 'state' },
+        { id: 'working', label: 'working', kind: 'state' },
+        { id: 'done', label: 'done', kind: 'state' },
+        { id: 'alert', label: 'alert', kind: 'state' },
+        { id: 'sleep', label: 'sleep', kind: 'state' },
+        { id: 'click', label: 'WEEEE', kind: 'state' },
+      ];
+
+      /** @type {boolean} */
+      let settingState = false;
+
       function toast(msg) {
         const el = document.getElementById('toast');
         el.textContent = msg;
@@ -618,14 +702,130 @@
         if (!snap) return;
         const serverOk = !!snap.serverOk;
         const last = snap.lastState || '—';
+        const displayState = last === 'click' ? 'WEEEE' : last;
         const hooksOk = !!snap.hooksInstalled;
         const visible = snap.visible !== false;
+        const manual = (snap.stateControlMode || 'auto') === 'manual';
         row.innerHTML = [
           `<span class="pill ${serverOk ? 'ok' : 'bad'}"><span class="dot"></span> Server ${serverOk ? 'online' : 'offline'}</span>`,
-          `<span class="pill"><span class="dot"></span> State <span class="mono">${escapeHtml(last)}</span></span>`,
+          `<span class="pill"><span class="dot"></span> State <span class="mono">${escapeHtml(displayState)}</span></span>`,
+          `<span class="pill ${manual ? 'warn' : 'ok'}"><span class="dot"></span> ${manual ? 'Manual lock' : 'Auto'}</span>`,
           `<span class="pill ${hooksOk ? 'ok' : 'warn'}"><span class="dot"></span> Hooks ${hooksOk ? 'installed' : 'missing'}</span>`,
           `<span class="pill ${visible ? 'ok' : 'warn'}"><span class="dot"></span> Pet ${visible ? 'shown' : 'hidden'}</span>`,
         ].join('');
+      }
+
+      function stateButtonActive(btnDef, mode, current) {
+        if (btnDef.kind === 'auto') return mode === 'auto';
+        return mode === 'manual' && btnDef.id === current;
+      }
+
+      async function withStateBusy(root, work) {
+        if (settingState) return;
+        settingState = true;
+        root.querySelectorAll('.state-btn').forEach((b) => {
+          b.disabled = true;
+        });
+        try {
+          await work();
+        } finally {
+          settingState = false;
+          root.querySelectorAll('.state-btn').forEach((b) => {
+            b.disabled = false;
+          });
+          // Re-sync active styles after unlock
+          renderStateGrid();
+        }
+      }
+
+      function renderStateGrid() {
+        const root = document.getElementById('stateGrid');
+        if (!root) return;
+        const current = String((snap && snap.lastState) || 'idle').toLowerCase();
+        const mode = (snap && snap.stateControlMode) || 'auto';
+        const needsBuild = root.childElementCount !== PET_STATE_BUTTONS.length;
+        if (needsBuild) {
+          root.innerHTML = PET_STATE_BUTTONS.map((btn) => {
+            const active = stateButtonActive(btn, mode, current) ? 'active' : '';
+            const extra =
+              btn.kind === 'auto' ? 'mode-auto' : btn.id === 'click' ? 'weee' : '';
+            const attr =
+              btn.kind === 'auto'
+                ? 'data-mode="auto"'
+                : `data-state="${escapeHtml(btn.id)}"`;
+            return `<button type="button" class="state-btn ${extra} ${active}" ${attr} aria-pressed="${stateButtonActive(btn, mode, current) ? 'true' : 'false'}">${escapeHtml(btn.label)}</button>`;
+          }).join('');
+
+          root.querySelectorAll('[data-mode="auto"]').forEach((btn) => {
+            btn.addEventListener('click', () => {
+              withStateBusy(root, async () => {
+                if (!api.setStateMode) {
+                  toast('Auto mode unavailable');
+                  return;
+                }
+                try {
+                  const result = await api.setStateMode('auto');
+                  if (result && result.ok === false) {
+                    toast(result.error || 'Could not set Auto');
+                    return;
+                  }
+                  snap = result;
+                  renderAll();
+                  toast('Auto — hooks drive the pet');
+                } catch (e) {
+                  toast('Could not set Auto');
+                }
+              });
+            });
+          });
+
+          root.querySelectorAll('[data-state]').forEach((btn) => {
+            btn.addEventListener('click', () => {
+              const state = btn.getAttribute('data-state');
+              if (!state || !api.setState) return;
+              withStateBusy(root, async () => {
+                try {
+                  const result = await api.setState(state);
+                  if (result && result.ok === false) {
+                    toast(result.error || 'Could not set state');
+                    return;
+                  }
+                  snap = result;
+                  renderAll();
+                  const label = state === 'click' ? 'WEEEE' : state;
+                  toast('Locked → ' + label);
+                } catch (e) {
+                  toast('Could not set state');
+                }
+              });
+            });
+          });
+        } else {
+          root.querySelectorAll('.state-btn').forEach((btn) => {
+            const isAuto = btn.getAttribute('data-mode') === 'auto';
+            const state = btn.getAttribute('data-state');
+            const isActive = isAuto
+              ? mode === 'auto'
+              : mode === 'manual' && state === current;
+            btn.classList.toggle('active', isActive);
+            btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+            btn.disabled = settingState;
+          });
+        }
+
+        const hint = document.getElementById('stateHint');
+        if (hint) {
+          if (mode === 'manual') {
+            const label = current === 'click' ? 'WEEEE' : current;
+            hint.innerHTML =
+              'Manual lock on <span class="mono">' +
+              escapeHtml(label) +
+              '</span> — Grok hooks are ignored. Press <strong>Auto</strong> for normal use.';
+          } else {
+            hint.innerHTML =
+              '<strong>Auto</strong> lets Grok hooks drive the pet. Pick any pose to lock it (loops in the current Fluid / Static style) until you return to Auto.';
+          }
+        }
       }
 
       function escapeHtml(s) {
@@ -740,6 +940,7 @@
 
       function renderAll() {
         renderStatus();
+        renderStateGrid();
         renderPets();
         renderTrayIcons();
         renderSettings();

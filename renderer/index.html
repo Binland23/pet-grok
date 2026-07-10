@@ -70,26 +70,27 @@
 
       /**
        * Playback behaviour per state. fps is a fallback only — loadAnimations
-       * prefers animations.json fps (24 for Imagine-smooth packs).
-       * Continuous loops (idle/working/etc.) play every frame for butter-smooth motion.
+       * prefers the pack's own fps:
+       *   fluid  → ~24fps Imagine smooth packs
+       *   static → classic sprite packs (~2–10fps, working ~8–9fps)
        */
       const MOTION = {
-        idle:     { fps: 24, holdMin: 0, holdMax: 0, playChance: 1.0, static: false, alwaysPlay: true },
-        thinking: { fps: 24, holdMin: 0, holdMax: 0, playChance: 1.0, static: false, alwaysPlay: true },
-        working:  { fps: 24, holdMin: 0, holdMax: 0, playChance: 1.0, static: false, alwaysPlay: true },
-        done:     { fps: 24, holdMin: 0.2, holdMax: 0.4, playChance: 1.0, static: false },
-        alert:    { fps: 24, holdMin: 0, holdMax: 0, playChance: 1.0, static: false, alwaysPlay: true },
-        sleep:    { fps: 24, holdMin: 0, holdMax: 0, playChance: 1.0, static: false, alwaysPlay: true },
-        wake:     { fps: 24, holdMin: 99, holdMax: 99, playChance: 1.0, static: false },
+        idle:     { fps: 3, holdMin: 0, holdMax: 0, playChance: 1.0, static: false, alwaysPlay: true },
+        thinking: { fps: 2.5, holdMin: 0, holdMax: 0, playChance: 1.0, static: false, alwaysPlay: true },
+        working:  { fps: 9, holdMin: 0, holdMax: 0, playChance: 1.0, static: false, alwaysPlay: true },
+        done:     { fps: 6, holdMin: 0.2, holdMax: 0.4, playChance: 1.0, static: false },
+        alert:    { fps: 4, holdMin: 0, holdMax: 0, playChance: 1.0, static: false, alwaysPlay: true },
+        sleep:    { fps: 1.5, holdMin: 0, holdMax: 0, playChance: 1.0, static: false, alwaysPlay: true },
+        wake:     { fps: 5, holdMin: 99, holdMax: 99, playChance: 1.0, static: false },
         // Local click ack (not driven by Grok hooks)
-        click:    { fps: 18, holdMin: 99, holdMax: 99, playChance: 1.0, static: false },
+        click:    { fps: 10, holdMin: 99, holdMax: 99, playChance: 1.0, static: false },
       };
 
       const CLICK_MS_FALLBACK = 520;
       const DRAG_THRESHOLD_PX = 6;
       /**
        * Extra idle bob on top of baked animation motion — kept subtle so fluid
-       * Imagine clips don't feel double-animated.
+       * Imagine clips don't feel double-animated. Static packs already animate.
        */
       const IDLE_BOB_HZ = 0.4;
       const IDLE_BOB_PX = 1.8;
@@ -118,8 +119,20 @@
       let preClickState = 'idle';
       let clickAnimGen = 0;
       let clickPulse = 0; // 0..1 bounce while acknowledging click
+      /**
+       * When true (dashboard manual lock), one-shot states (wake/done/click)
+       * loop/hold instead of auto-returning to idle.
+       */
+      let stickyHold = false;
       let muted = false;
+      /** User preference from dashboard: fluid (24fps) | static (classic ~9fps packs) */
       let animationMode = 'fluid';
+      /**
+       * Currently loaded frame pack mode (matches animationMode once packs load).
+       * @type {'fluid' | 'static' | null}
+       */
+      let loadedPackMode = null;
+      let packLoadGen = 0;
       /** @type {AudioContext|null} */
       let audioCtx = null;
 
@@ -257,22 +270,48 @@
         return src;
       }
 
-      async function loadAnimations() {
+      /** Active pack mode from the dashboard toggle (not overridden by manual lock). */
+      function desiredPackMode() {
+        return animationMode === 'static' ? 'static' : 'fluid';
+      }
+
+      /**
+       * Load frame packs for the selected animation mode.
+       * fluid  → animations.json + frames/ (24fps smooth)
+       * static → animations-static.json + frames-static/ (classic low-fps sprites)
+       * @param {'fluid' | 'static'} [mode]
+       */
+      async function loadAnimations(mode = desiredPackMode()) {
+        const packMode = mode === 'static' ? 'static' : 'fluid';
         let meta = null;
         if (api && api.getAnimations) {
-          meta = await api.getAnimations();
+          meta = await api.getAnimations(packMode);
         }
         if (!meta) {
-          const res = await fetch(ASSET + 'animations.json');
-          if (!res.ok) throw new Error('animations.json missing');
-          meta = await res.json();
+          const file =
+            packMode === 'static' ? 'animations-static.json' : 'animations.json';
+          try {
+            const res = await fetch(ASSET + file);
+            if (res.ok) meta = await res.json();
+          } catch (_) { /* try fluid fallback below */ }
+          if (!meta && packMode === 'static') {
+            const res = await fetch(ASSET + 'animations.json');
+            if (!res.ok) throw new Error('animations.json missing');
+            meta = await res.json();
+          } else if (!meta) {
+            throw new Error('animations.json missing');
+          }
         }
-        const defaultFps = typeof meta.fpsDefault === 'number' ? meta.fpsDefault : 12;
+        const defaultFps =
+          typeof meta.fpsDefault === 'number'
+            ? meta.fpsDefault
+            : packMode === 'static'
+              ? 8
+              : 24;
         const out = {};
         for (const [state, def] of Object.entries(meta.animations || {})) {
-          // Static mode reuses the shipped hero pose for each state. Click is
-          // synthesized below from those poses because it has no hero sprite.
-          const list = framePathsForMode(state, def.frames, animationMode);
+          // Manifest already points at frames/ or frames-static/; use as-is.
+          const list = framePathsForMode(state, def.frames, packMode, def.frames);
           if (!list.length) continue;
           const frames = await Promise.all(
             list.map(async (rel) => loadImage(await resolveAssetSrc(rel)))
@@ -283,7 +322,15 @@
           out[state] = {
             frames,
             loop: def.loop !== false,
-            loopMode: def.loopMode || (def.loop !== false ? 'pingpong' : 'restart'),
+            // Classic static packs are short pose cycles — restart reads well;
+            // fluid packs prefer ping-pong for seamless long loops.
+            loopMode:
+              def.loopMode ||
+              (packMode === 'static'
+                ? 'restart'
+                : def.loop !== false
+                  ? 'pingpong'
+                  : 'restart'),
             fps,
           };
         }
@@ -303,11 +350,28 @@
               frames,
               loop: false,
               loopMode: 'restart',
-              fps: (MOTION.click && MOTION.click.fps) || 18,
+              fps: (MOTION.click && MOTION.click.fps) || 10,
             };
           }
         }
         return out;
+      }
+
+      /**
+       * Ensure loaded packs match the fluid/static preference.
+       * @returns {Promise<boolean>} true if packs were reloaded
+       */
+      async function ensureAnimationPacks() {
+        const want = desiredPackMode();
+        if (loadedPackMode === want && anims && Object.keys(anims).length) {
+          return false;
+        }
+        const gen = ++packLoadGen;
+        const next = await loadAnimations(want);
+        if (gen !== packLoadGen) return false;
+        anims = next;
+        loadedPackMode = want;
+        return true;
       }
 
       const STATUS_LABELS = {
@@ -326,16 +390,36 @@
       function setState(next, options = {}) {
         if (!next) return;
         next = String(next).toLowerCase();
+        // sticky: true from dashboard manual lock; sticky: false clears it.
+        // Omit sticky (hook / internal transitions) to leave the flag alone unless
+        // this is a normal auto payload that should exit sticky — handled by
+        // releaseStickyHold() and by explicit sticky:false.
+        if (typeof options.sticky === 'boolean') {
+          stickyHold = options.sticky;
+        }
+
+        // If fluid/static packs are still loading (mode toggle), wait then re-apply.
+        if (desiredPackMode() !== loadedPackMode) {
+          const pending = { next, options: Object.assign({}, options, { sticky: stickyHold, force: true }) };
+          ensureAnimationPacks()
+            .then(() => setState(pending.next, pending.options))
+            .catch((err) => console.error('[anim packs]', err));
+          return;
+        }
 
         // Repeated hook events for a continuous state are status updates, not
-        // animation restarts. Preserve the current frame and playback direction.
+        // animation restarts. Preserve the current frame and playback direction
+        // (ping-pong smoothing). Only force a restart for one-shot manual locks
+        // so WEEEE / done SFX can replay — never for continuous loops.
         const activeAnim = anims[next];
+        const oneShot =
+          next === 'wake' || next === 'done' || next === 'click';
         const alreadyPlaying = shouldPreserveFrame({
-          force: options.force,
+          force: options.force || (options.sticky === true && oneShot),
           next,
           current,
           loop: activeAnim && activeAnim.loop,
-          alwaysPlay: profile(next).alwaysPlay,
+          alwaysPlay: profile(next).alwaysPlay || (stickyHold && !oneShot),
           mode,
           playOnce,
         });
@@ -352,25 +436,75 @@
 
         if (next === 'wake') {
           applyState('wake');
+          if (stickyHold) {
+            // Dashboard manual: keep looping the wake stretch
+            mode = 'play';
+            playOnce = false;
+            return;
+          }
           const ms = onceDurationMs('wake', wakeMs);
           wakeTimer = setTimeout(() => setState('idle'), ms);
           return;
         }
         if (next === 'done') {
           applyState('done');
+          playDoneSound();
+          if (stickyHold) {
+            mode = 'play';
+            playOnce = false;
+            return;
+          }
           // Play celebrate frames once, then settle — no perpetual jumping
           mode = 'play';
           playOnce = true;
-          playDoneSound();
           const ms = onceDurationMs('done', celebrateMs);
           celebrateTimer = setTimeout(() => setState('idle'), ms);
           return;
         }
         if (next === 'click') {
+          if (stickyHold) {
+            // Dashboard WEEEE: loop the bounce instead of restoring prior state
+            if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+            clickPulse = 1;
+            playWeeeSound();
+            applyState('click');
+            mode = 'play';
+            playOnce = false;
+            return;
+          }
           playClickAck();
           return;
         }
         applyState(next);
+      }
+
+      /** Leave sticky lock when the dashboard switches back to Auto. */
+      function releaseStickyHold() {
+        stickyHold = false;
+        if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+        if (celebrateTimer) { clearTimeout(celebrateTimer); celebrateTimer = null; }
+        if (wakeTimer) { clearTimeout(wakeTimer); wakeTimer = null; }
+        clickPulse = 0;
+
+        const settle = () => {
+          // One-shot poses don't make sense as permanent auto states — settle to idle
+          if (current === 'wake' || current === 'done' || current === 'click') {
+            applyState('idle');
+          } else if (current === 'thinking' || current === 'working' || current === 'alert') {
+            // Keep continuous agent poses; re-apply so static packs take effect if needed
+            applyState(current);
+          } else {
+            applyState(current || 'idle');
+          }
+        };
+
+        if (desiredPackMode() !== loadedPackMode) {
+          ensureAnimationPacks()
+            .then(settle)
+            .catch((err) => console.error('[anim packs]', err));
+          return;
+        }
+        settle();
       }
 
       /**
@@ -418,16 +552,17 @@
           playOnce = false;
         } else if (name === 'wake' || name === 'done' || name === 'click') {
           mode = 'play';
-          playOnce = true;
-        } else if (p.alwaysPlay) {
-          // Continuous loop (working / laptop typing)
+          // Sticky manual locks loop; normal auto mode plays once
+          playOnce = !stickyHold;
+        } else if (p.alwaysPlay || stickyHold) {
+          // Continuous loop (working / laptop typing) or dashboard hold
           mode = 'play';
           playOnce = false;
         } else {
           scheduleHold(name);
         }
         setStatus(name);
-        console.log('[pet] applied state', name, 'frames=', (anims[name] && anims[name].frames.length) || 0);
+        console.log('[pet] applied state', name, 'frames=', (anims[name] && anims[name].frames.length) || 0, 'sticky=', stickyHold);
       }
 
       function draw(ts) {
@@ -456,22 +591,30 @@
               }
             }
           } else if (!p.static && mode === 'play') {
-            // sequence for active states; continuous loop when alwaysPlay
+            // Continuous loop when alwaysPlay / sticky. Honor pack loopMode:
+            // fluid packs use pingpong; classic static packs use restart (~9fps).
+            // Sticky one-shots promote to the pack's loop style so locks keep moving.
             frameAcc += dt * p.fps;
             while (frameAcc >= 1) {
               frameAcc -= 1;
-              const repeat = p.alwaysPlay || (anim.loop && !playOnce);
+              const repeat = stickyHold || p.alwaysPlay || (anim.loop && !playOnce);
+              const loopMode = anim.loopMode || 'restart';
               const nextFrame = advanceFrame(
                 frameIndex,
                 frameDirection,
                 anim.frames.length,
                 repeat,
-                anim.loopMode
+                loopMode
               );
               frameIndex = nextFrame.frameIndex;
               frameDirection = nextFrame.direction;
               if (nextFrame.completed) {
-                if (current === 'click') {
+                if (stickyHold) {
+                  // advanceFrame(repeat=true) should not complete; keep playing
+                  // and leave frameIndex/direction as returned (no hard reset).
+                  mode = 'play';
+                  playOnce = false;
+                } else if (current === 'click') {
                   // hold last click frame until click timer restores prior state
                   mode = 'hold';
                   holdLeft = 1e9;
@@ -632,7 +775,7 @@
         }
 
         try {
-          anims = await loadAnimations();
+          await ensureAnimationPacks();
           setState('idle');
         } catch (err) {
           console.error(err);
@@ -648,7 +791,14 @@
           if (theme?.wakeMs) wakeMs = theme.wakeMs;
         } catch (_) { /* ignore */ }
 
-        api.onState((s) => setState(s));
+        api.onState((s, opts) => setState(s, opts || {}));
+        if (api.onStateControl) {
+          api.onStateControl((payload) => {
+            if (payload && payload.mode === 'auto') {
+              releaseStickyHold();
+            }
+          });
+        }
         api.setIgnoreMouse(true);
 
         if (api.onThemeChanged) {
@@ -656,8 +806,9 @@
             try {
               if (theme?.celebrateMs) celebrateMs = theme.celebrateMs;
               if (theme?.wakeMs) wakeMs = theme.wakeMs;
-              anims = await loadAnimations();
-              setState(current || 'idle', { force: true });
+              loadedPackMode = null;
+              await ensureAnimationPacks();
+              setState(current || 'idle', { force: true, sticky: stickyHold });
             } catch (err) {
               console.error('[theme reload]', err);
             }
@@ -670,8 +821,9 @@
             if (nextMode !== animationMode) {
               animationMode = nextMode;
               try {
-                anims = await loadAnimations();
-                setState(current || 'idle', { force: true });
+                // Sticky locks keep fluid packs; Auto respects the new preference
+                await ensureAnimationPacks();
+                setState(current || 'idle', { force: true, sticky: stickyHold });
               } catch (err) {
                 console.error('[animation mode reload]', err);
               }

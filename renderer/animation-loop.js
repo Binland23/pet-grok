@@ -48,9 +48,24 @@
     );
   }
 
-  function framePathsForMode(state, fluidFrames, animationMode) {
+  /**
+   * Choose frame paths for the active animation mode.
+   *
+   * - fluid: 24fps Imagine smooth packs (frames/ + animations.json)
+   * - static: classic low-fps sprite packs (frames-static/ + animations-static.json)
+   *
+   * When staticFrames is omitted/empty, fall back to fluidFrames so themes that
+   * only ship one pack (e.g. matcha-style) still animate.
+   *
+   * @param {string} state
+   * @param {string[]} fluidFrames
+   * @param {'fluid' | 'static'} animationMode
+   * @param {string[]} [staticFrames]
+   */
+  function framePathsForMode(state, fluidFrames, animationMode, staticFrames) {
     if (animationMode === 'static') {
-      return state === 'click' ? [] : [`${state}.png`];
+      if (Array.isArray(staticFrames) && staticFrames.length) return staticFrames;
+      return Array.isArray(fluidFrames) ? fluidFrames : [];
     }
     return Array.isArray(fluidFrames) ? fluidFrames : [];
   }

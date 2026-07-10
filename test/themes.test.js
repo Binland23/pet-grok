@@ -45,7 +45,7 @@ describe('themes module (shipped listThemes / paths)', () => {
     });
 
     it(`themeAnimationsPath + assets for ${expected.id}`, () => {
-      const p = themes.themeAnimationsPath(expected.id);
+      const p = themes.themeAnimationsPath(expected.id, 'fluid');
       assert.ok(fs.existsSync(p), p);
       const j = JSON.parse(fs.readFileSync(p, 'utf8'));
       assert.ok(j.animations);
@@ -62,13 +62,33 @@ describe('themes module (shipped listThemes / paths)', () => {
       const idleAbs = themes.themeAssetAbs(expected.id, 'frames/idle_00.png');
       assert.ok(fs.existsSync(idleAbs), idleAbs);
       for (const state of REQUIRED_STATES) {
-        const staticAbs = themes.themeAssetAbs(expected.id, `${state}.png`);
-        assert.ok(fs.existsSync(staticAbs), `${expected.id} missing static ${state} sprite`);
+        const heroAbs = themes.themeAssetAbs(expected.id, `${state}.png`);
+        assert.ok(fs.existsSync(heroAbs), `${expected.id} missing hero ${state} sprite`);
       }
     });
 
+    it(`classic static sprite packs for ${expected.id}`, () => {
+      const p = themes.themeAnimationsPath(expected.id, 'static');
+      assert.ok(fs.existsSync(p), p);
+      const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+      assert.ok(j.animations);
+      for (const state of REQUIRED_STATES) {
+        assert.ok(j.animations[state], `${expected.id} static missing anim ${state}`);
+        const frames = j.animations[state].frames;
+        assert.ok(Array.isArray(frames) && frames.length >= 2, `${expected.id} static ${state} needs multi-frame cycle`);
+        assert.ok(j.animations[state].fps > 0 && j.animations[state].fps <= 12, `${expected.id} static ${state} should be low-fps`);
+        for (const rel of frames) {
+          const abs = themes.themeAssetAbs(expected.id, rel);
+          assert.ok(fs.existsSync(abs), abs);
+        }
+      }
+      const working = j.animations.working;
+      assert.ok(working.frames.length >= 4, 'static working should cycle several pose frames');
+      assert.ok(working.fps >= 6 && working.fps <= 10, 'static working ~8–9fps');
+    });
+
     it(`valid working animation pack for ${expected.id}`, () => {
-      const p = themes.themeAnimationsPath(expected.id);
+      const p = themes.themeAnimationsPath(expected.id, 'fluid');
       const j = JSON.parse(fs.readFileSync(p, 'utf8'));
       const working = j.animations.working;
       assert.ok(working);

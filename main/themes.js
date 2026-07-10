@@ -66,16 +66,35 @@ function normalizeThemeId(themeId, fallback = 'race-crab') {
   return id && loadThemeJson(id) ? id : fallback;
 }
 
-function themeAnimationsPath(themeId) {
+/**
+ * Path to the animations manifest for a theme.
+ * @param {string} [themeId]
+ * @param {'fluid' | 'static'} [mode] static → classic low-fps packs; fluid → 24fps
+ */
+function themeAnimationsPath(themeId, mode = 'fluid') {
   const id = themeId || 'race-crab';
-  const candidates = [
-    path.join(RENDERER_ASSETS, id, 'animations.json'),
-    path.join(THEMES_DIR, id, 'animations.json'),
-  ];
+  const preferStatic = String(mode || '').toLowerCase() === 'static';
+  /** @type {string[]} */
+  const candidates = preferStatic
+    ? [
+        path.join(RENDERER_ASSETS, id, 'animations-static.json'),
+        path.join(THEMES_DIR, id, 'animations-static.json'),
+        // Fall back to fluid/main manifest if a theme has no separate static pack
+        path.join(RENDERER_ASSETS, id, 'animations.json'),
+        path.join(THEMES_DIR, id, 'animations.json'),
+      ]
+    : [
+        path.join(RENDERER_ASSETS, id, 'animations.json'),
+        path.join(THEMES_DIR, id, 'animations.json'),
+      ];
   for (const p of candidates) {
     if (fs.existsSync(p)) return p;
   }
-  return path.join(RENDERER_ASSETS, 'race-crab', 'animations.json');
+  return path.join(
+    RENDERER_ASSETS,
+    'race-crab',
+    preferStatic ? 'animations-static.json' : 'animations.json'
+  );
 }
 
 function themeAssetAbs(themeId, rel) {

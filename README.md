@@ -88,8 +88,11 @@ curl -s -X POST 127.0.0.1:7788/state -d done
 curl -s -X POST 127.0.0.1:7788/state -d alert
 curl -s -X POST 127.0.0.1:7788/state -d sleep
 curl -s -X POST 127.0.0.1:7788/state -d wake
+curl -s -X POST 127.0.0.1:7788/state -d click   # WEEEE bounce (also accepts: weee)
 curl -s -X POST 127.0.0.1:7788/show
 ```
+
+> Dashboard **manual lock** is separate from curl: picking a pose in the dashboard holds it (and ignores hooks) until you press **Auto**. Curl/`POST /state` alone still uses normal auto transitions (wake/done settle to idle).
 
 `POST /show` (and SessionStart → `wake`) re-shows a **running but hidden** pet. They do **not** launch Pet Grok if it is not already running.
 
@@ -173,8 +176,9 @@ The **same menu** is available by **right-clicking the pet** on the desktop.
 Open from the tray or pet context menu (**Open Dashboard…**). From there you can:
 
 - See live server / hook / pet state
+- **Manually toggle pet state** (Auto, idle, wake, thinking, working, done, alert, sleep, **WEEEE**) — picking a pose locks it (one-shots hold/loop instead of snapping back); press **Auto** to return to hook-driven behavior
 - Change size, visibility, mute
-- Switch between **Fluid animation** (the theme's full frame pack) and **Static sprites**
+- Switch between **Fluid animation** (24fps smooth Imagine packs) and **Static sprites** (classic low-fps pose cycles, ~2–10 fps)
 - Install or refresh Grok hooks
 - Choose a **pet** (Hermit Crab, Cloud Pup, Bubble Axolotl, Matcha Frog — drop more under `themes/<id>/` and they appear automatically)
 - Choose the **tray icon** (Grok logo by default, match active pet, or any pet idle) — updates live
@@ -232,9 +236,18 @@ Pick pets from the **Dashboard → Pet** cards or the tray **Pet** menu.
 
 States: `idle`, `thinking`, `working`, `done`, `alert`, `sleep`, `wake` (plus optional `click`).
 
+### Animation modes
+
+| Mode | Pack | Typical fps |
+|------|------|-------------|
+| **Fluid** | `animations.json` + `frames/` | 24 (Imagine video extracts) |
+| **Static sprites** | `animations-static.json` + `frames-static/` | ~2–10 (classic pose cycles; working ~8–9) |
+
+Dashboard → **Animation style** switches between them. Manual state locks use whichever mode is selected (both loop).
+
 ### Smooth 24fps animations (Imagine video)
 
-The newer pets use **24fps** frame packs extracted from Imagine `image_to_video` clips. Matcha Frog retains its original hand-authored frame pack. The pet renderer loads **every** frame and uses each theme's `fps` from `animations.json`.
+The newer pets ship **24fps** fluid packs extracted from Imagine `image_to_video` clips, plus the restored **classic static** packs for the Static sprites toggle. Matcha Frog’s hand-authored frames serve both modes.
 
 Pipeline:
 

@@ -15,7 +15,7 @@ const {
 
 const prefs = require('./prefs');
 const hooks = require('./hooks');
-const { startStateServer } = require('./state-server');
+const { startStateServer, ALLOWED_STATES, STATE_ALIASES } = require('./state-server');
 const platform = require('./platform');
 const themes = require('./themes');
 const { focusActiveGrokTerminal } = require('./focus-terminal');
@@ -36,6 +36,13 @@ let idleTimer = null;
 let state = null;
 /** @type {string} */
 let lastKnownState = 'idle';
+/**
+ * Dashboard state control:
+ * - auto: Grok hooks + idle timeout drive the pet (default)
+ * - manual: user-forced pose; hooks ignored until Auto is selected again
+ * @type {'auto' | 'manual'}
+ */
+let stateControlMode = 'auto';
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -89,10 +96,50 @@ function clearIdleTimer() {
 
 function resetIdleTimer() {
   clearIdleTimer();
+  if (stateControlMode === 'manual') return;
   const ms = loadTheme().idleTimeoutMs || IDLE_TIMEOUT_MS;
   idleTimer = setTimeout(() => {
     pushState('sleep');
   }, ms);
+}
+
+/**
+ * Normalize a state name (aliases like weee → click).
+ * @param {unknown} state
+ * @returns {string}
+ */
+function normalizePetState(state) {
+  let s = String(state || '')
+    .trim()
+    .toLowerCase();
+  if (STATE_ALIASES[s]) s = STATE_ALIASES[s];
+  return s;
+}
+
+/**
+ * Resume hook-driven behavior after a manual lock.
+ */
+function setStateControlAuto() {
+  stateControlMode = 'auto';
+  // Drop sticky hold on one-shot poses so normal transitions resume
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    try {
+      mainWindow.webContents.send('pet:state-control', { mode: 'auto' });
+    } catch {
+      /* ignore */
+    }
+  }
+  // Re-arm idle policy from whatever pose the pet is currently in
+  if (ACTIVE_AGENT_STATES.has(lastKnownState)) {
+    clearIdleTimer();
+  } else if (lastKnownState === 'idle') {
+    resetIdleTimer();
+  } else if (lastKnownState === 'sleep' || lastKnownState === 'done' || lastKnownState === 'click') {
+    clearIdleTimer();
+  } else {
+    clearIdleTimer();
+  }
+  broadcastDashboardSnapshot();
 }
 
 /** Last states pushed to renderer (for health / debugging). */
@@ -140,22 +187,38 @@ function forceShowPet(reason) {
   }
 }
 
-function pushState(petState) {
+/**
+ * Push a pet state to the overlay.
+ * @param {string} petState
+ * @param {{ manual?: boolean, sticky?: boolean }} [opts]
+ *   manual: dashboard force (allowed while stateControlMode is manual)
+ *   sticky: hold one-shot poses (wake/done/click) instead of auto-returning to idle
+ */
+function pushState(petState, opts = {}) {
+  petState = normalizePetState(petState);
+  // While the user has locked a manual pose, ignore Grok hooks / idle auto-sleep.
+  if (stateControlMode === 'manual' && !opts.manual) {
+    appendPushLog(`[pushState] ignored (manual mode): ${petState}`);
+    return;
+  }
+
+  const sticky = stateControlMode === 'manual' || !!opts.sticky;
   const at = Date.now();
   lastKnownState = petState;
   const hasWindow = !!(mainWindow && !mainWindow.isDestroyed());
-  pushHistory.push({ state: petState, at, window: hasWindow });
+  pushHistory.push({ state: petState, at, window: hasWindow, sticky });
   if (pushHistory.length > 40) pushHistory.shift();
-  const line = `[pushState] ${petState} window=${hasWindow} at=${at}`;
+  const line = `[pushState] ${petState} sticky=${sticky} manual=${!!opts.manual} window=${hasWindow} at=${at}`;
   console.log(line);
   appendPushLog(line);
   broadcastDashboardSnapshot();
 
   if (hasWindow) {
+    const payload = sticky ? { state: petState, sticky: true } : petState;
     const send = () => {
       if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('pet:state', petState);
-        appendPushLog(`[pushState] IPC sent pet:state=${petState} at=${Date.now()}`);
+        mainWindow.webContents.send('pet:state', payload);
+        appendPushLog(`[pushState] IPC sent pet:state=${petState} sticky=${sticky} at=${Date.now()}`);
       }
     };
     if (mainWindow.webContents.isLoading()) {
@@ -172,18 +235,22 @@ function pushState(petState) {
     }
   }
 
-  // Idle timeout policy:
+  // Idle timeout policy (disabled entirely while manual lock is on):
   // - thinking/working/alert: agent mid-turn → never auto-sleep
   // - idle: start 60s quiet timer
   // - done/wake: brief; timer starts when we reach idle
   // - sleep: clear timer
+  if (stateControlMode === 'manual') {
+    clearIdleTimer();
+    return;
+  }
   if (ACTIVE_AGENT_STATES.has(petState)) {
     clearIdleTimer();
   } else if (petState === 'idle') {
     resetIdleTimer();
   } else if (petState === 'sleep') {
     clearIdleTimer();
-  } else if (petState === 'done') {
+  } else if (petState === 'done' || petState === 'click') {
     clearIdleTimer();
   }
 }
@@ -526,7 +593,8 @@ function buildDashboardSnapshot() {
     hooksInstalled: hooks.isInstalled(),
     hooksPath: hooks.getHookFilePath(),
     serverOk,
-    lastState,
+    lastState: lastKnownState || lastState,
+    stateControlMode,
     history: pushHistory.slice(-12),
     version: app.getVersion() || '1.0.0',
   };
@@ -681,8 +749,9 @@ function registerIpc() {
     };
   });
   ipcMain.handle('pet:get-push-history', () => pushHistory.slice(-20));
-  ipcMain.handle('pet:get-animations', () => {
-    const p = themes.themeAnimationsPath(getState().themeId);
+  ipcMain.handle('pet:get-animations', (_e, mode) => {
+    const animMode = String(mode || 'fluid').toLowerCase() === 'static' ? 'static' : 'fluid';
+    const p = themes.themeAnimationsPath(getState().themeId, animMode);
     try {
       return JSON.parse(fs.readFileSync(p, 'utf8'));
     } catch (err) {
@@ -722,6 +791,50 @@ function registerIpc() {
       lastState: stateServer.getLastState(),
       history: stateServer.getHistory().slice(-12),
       pid: process.pid,
+    };
+  });
+  /**
+   * Manually force a pet state from the dashboard.
+   * Enters manual mode: pose sticks (including wake/done/WEEEE) and hooks are ignored.
+   * @param {unknown} _e
+   * @param {unknown} state
+   */
+  ipcMain.handle('dashboard:set-state', (_e, state) => {
+    const s = normalizePetState(state);
+    if (!ALLOWED_STATES.has(s)) {
+      return { ok: false, error: `unknown state: ${s}`, ...buildDashboardSnapshot() };
+    }
+    stateControlMode = 'manual';
+    // Record on the HTTP server without re-entering pushState via onState
+    if (stateServer && typeof stateServer.setState === 'function') {
+      stateServer.setState(s, { emit: false });
+    }
+    pushState(s, { manual: true, sticky: true });
+    return { ok: true, state: s, ...buildDashboardSnapshot() };
+  });
+  /**
+   * Switch between auto (hooks) and manual (dashboard lock) state control.
+   * @param {unknown} _e
+   * @param {unknown} mode
+   */
+  ipcMain.handle('dashboard:set-state-mode', (_e, mode) => {
+    const m = String(mode || '')
+      .trim()
+      .toLowerCase();
+    if (m === 'auto') {
+      setStateControlAuto();
+      return { ok: true, stateControlMode: 'auto', ...buildDashboardSnapshot() };
+    }
+    if (m === 'manual') {
+      stateControlMode = 'manual';
+      clearIdleTimer();
+      broadcastDashboardSnapshot();
+      return { ok: true, stateControlMode: 'manual', ...buildDashboardSnapshot() };
+    }
+    return {
+      ok: false,
+      error: `unknown mode: ${m}`,
+      ...buildDashboardSnapshot(),
     };
   });
   ipcMain.on('dashboard:close', () => {

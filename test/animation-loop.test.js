@@ -85,10 +85,17 @@ describe('animation loop cursor', () => {
     assert.equal(shouldPreserveFrame({ ...active, playOnce: true }), false);
   });
 
-  it('selects static hero sprites instead of fluid frame packs', () => {
+  it('selects classic static frame packs vs fluid frame packs', () => {
     const fluid = ['frames/working_00.png', 'frames/working_01.png'];
-    assert.deepEqual(framePathsForMode('working', fluid, 'fluid'), fluid);
-    assert.deepEqual(framePathsForMode('working', fluid, 'static'), ['working.png']);
-    assert.deepEqual(framePathsForMode('click', fluid, 'static'), []);
+    const classic = [
+      'frames-static/working_00.png',
+      'frames-static/working_01.png',
+      'frames-static/working_02.png',
+    ];
+    assert.deepEqual(framePathsForMode('working', fluid, 'fluid', classic), fluid);
+    assert.deepEqual(framePathsForMode('working', fluid, 'static', classic), classic);
+    // Themes without a separate static pack fall back to the fluid list
+    assert.deepEqual(framePathsForMode('working', fluid, 'static', []), fluid);
   });
 });
+

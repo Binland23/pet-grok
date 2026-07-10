@@ -1,0 +1,82 @@
+{
+  "frameSize": 256,
+  "animations": {
+    "idle": {
+      "frames": [
+        "frames-static/idle_00.png",
+        "frames-static/idle_01.png",
+        "frames-static/idle_02.png"
+      ],
+      "fps": 3,
+      "loop": true
+    },
+    "thinking": {
+      "frames": [
+        "frames-static/thinking_00.png",
+        "frames-static/thinking_01.png",
+        "frames-static/thinking_02.png"
+      ],
+      "fps": 2.5,
+      "loop": true
+    },
+    "working": {
+      "frames": [
+        "frames-static/working_00.png",
+        "frames-static/working_01.png",
+        "frames-static/working_02.png",
+        "frames-static/working_03.png",
+        "frames-static/working_04.png",
+        "frames-static/working_05.png",
+        "frames-static/working_06.png",
+        "frames-static/working_07.png"
+      ],
+      "fps": 8,
+      "loop": true
+    },
+    "done": {
+      "frames": [
+        "frames-static/done_00.png",
+        "frames-static/done_01.png",
+        "frames-static/done_02.png"
+      ],
+      "fps": 6,
+      "loop": false
+    },
+    "alert": {
+      "frames": [
+        "frames-static/alert_00.png",
+        "frames-static/alert_01.png"
+      ],
+      "fps": 4,
+      "loop": true
+    },
+    "sleep": {
+      "frames": [
+        "frames-static/sleep_00.png",
+        "frames-static/sleep_01.png"
+      ],
+      "fps": 1.5,
+      "loop": true
+    },
+    "wake": {
+      "frames": [
+        "frames-static/wake_00.png",
+        "frames-static/wake_01.png"
+      ],
+      "fps": 5,
+      "loop": false
+    },
+    "click": {
+      "frames": [
+        "frames-static/alert_00.png",
+        "frames-static/alert_01.png",
+        "frames-static/wake_00.png",
+        "frames-static/idle_00.png"
+      ],
+      "fps": 10,
+      "loop": false
+    }
+  },
+  "source": "static-sprites",
+  "style": "static"
+}

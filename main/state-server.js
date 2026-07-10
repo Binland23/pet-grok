@@ -13,7 +13,16 @@ const ALLOWED_STATES = new Set([
   'alert',
   'sleep',
   'idle',
+  /** Local click / WEEEE bounce (dashboard + manual testing; not a Grok hook). */
+  'click',
 ]);
+
+/** Friendly aliases accepted by parseStateBody / setState */
+const STATE_ALIASES = {
+  weee: 'click',
+  whee: 'click',
+  wooo: 'click',
+};
 
 /** Map Grok hook event names (PascalCase, snake_case, camelCase) → pet state */
 const EVENT_TO_STATE = {
@@ -81,6 +90,7 @@ function parseStateBody(raw, urlPath) {
   }
 
   const lower = body.toLowerCase();
+  if (STATE_ALIASES[lower]) return STATE_ALIASES[lower];
   if (ALLOWED_STATES.has(lower)) return lower;
 
   if (body.startsWith('{')) {
@@ -240,6 +250,26 @@ function startStateServer(onState, opts = {}) {
         port,
         getLastState: () => lastState,
         getHistory: () => history.slice(),
+        /**
+         * Manually set pet state (dashboard / tests). Same path as POST /state.
+         * @param {string} state
+         * @param {{ emit?: boolean }} [opts] emit=false updates history only (no onState)
+         * @returns {string | null} applied state, or null if invalid
+         */
+        setState(state, opts = {}) {
+          let s = String(state || '').trim().toLowerCase();
+          if (STATE_ALIASES[s]) s = STATE_ALIASES[s];
+          if (!ALLOWED_STATES.has(s)) return null;
+          if (opts.emit === false) {
+            lastState = s;
+            lastAt = Date.now();
+            history.push({ state: s, at: lastAt });
+            if (history.length > 50) history.shift();
+            return s;
+          }
+          applyState(s);
+          return s;
+        },
         close() {
           return new Promise((resClose) => {
             server.close(() => resClose());
@@ -254,6 +284,7 @@ module.exports = {
   HOST,
   PORT,
   ALLOWED_STATES,
+  STATE_ALIASES,
   EVENT_TO_STATE,
   parseStateBody,
   mapHookEventToState,

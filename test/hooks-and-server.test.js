@@ -208,9 +208,10 @@ describe('hooks payload (real makeHooksPayload)', () => {
 
 describe('parseStateBody (real shipped parser)', () => {
   it('accepts plain-text states', () => {
-    for (const s of ['thinking', 'working', 'done', 'wake', 'idle', 'sleep', 'alert']) {
+    for (const s of ['thinking', 'working', 'done', 'wake', 'idle', 'sleep', 'alert', 'click']) {
       assert.equal(parseStateBody(s), s);
     }
+    assert.equal(parseStateBody('weee'), 'click');
   });
 
   it('strips quotes and maps Grok event JSON', () => {
@@ -310,6 +311,32 @@ describe('state server HTTP (real startStateServer)', () => {
   it('rejects unknown state with 400', async () => {
     const r = await post(port, '/state', 'not-a-state');
     assert.equal(r.status, 400);
+  });
+
+  it('setState applies allowed states and rejects invalid ones', async () => {
+    received.length = 0;
+    assert.equal(server.setState('alert'), 'alert');
+    assert.equal(server.getLastState(), 'alert');
+    assert.deepEqual(received, ['alert']);
+    assert.equal(server.setState('not-a-state'), null);
+    assert.equal(server.getLastState(), 'alert');
+    assert.deepEqual(received, ['alert']);
+    assert.equal(server.setState('  SLEEP  '), 'sleep');
+    assert.equal(server.getLastState(), 'sleep');
+    assert.deepEqual(received, ['alert', 'sleep']);
+  });
+
+  it('accepts click / WEEEE alias and setState emit:false skips onState', async () => {
+    received.length = 0;
+    const r = await post(port, '/state', 'weee');
+    assert.equal(r.status, 200);
+    assert.equal(r.body, 'click');
+    assert.deepEqual(received, ['click']);
+
+    received.length = 0;
+    assert.equal(server.setState('click', { emit: false }), 'click');
+    assert.equal(server.getLastState(), 'click');
+    assert.deepEqual(received, []);
   });
 });
 
