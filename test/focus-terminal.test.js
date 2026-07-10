@@ -64,6 +64,14 @@ describe('focus-terminal (shipped helpers)', () => {
     assert.equal(typeof tty, 'string');
   });
 
+  it('sanitizeTty strips injection characters', () => {
+    const { sanitizeTty, sanitizeAppName } = require('../main/focus-terminal');
+    assert.equal(sanitizeTty('/dev/ttys001'), 'ttys001');
+    assert.equal(sanitizeTty('ttys001"; do shell script "evil'), 'ttys001doshellscriptevil');
+    assert.equal(sanitizeAppName('Terminal'), 'Terminal');
+    assert.equal(sanitizeAppName('Term"inal'), 'Terminal');
+  });
+
   it('ACTIVE_SESSIONS_PATH is under ~/.grok', () => {
     assert.ok(ACTIVE_SESSIONS_PATH.includes('.grok'));
     assert.ok(ACTIVE_SESSIONS_PATH.endsWith('active_sessions.json'));

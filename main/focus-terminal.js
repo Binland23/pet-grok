@@ -185,9 +185,18 @@ function resolveTerminalHost(pid) {
   return { app, tty, terminalPid };
 }
 
-function runOsascript(script) {
+/**
+ * Run an AppleScript handler with argv (dynamic values never interpolated into source).
+ * @param {string} script
+ * @param {string[]} [argv]
+ */
+function runOsascript(script, argv = []) {
   return new Promise((resolve) => {
-    execFile('osascript', ['-e', script], { timeout: 4000 }, (err, stdout, stderr) => {
+    const args = ['-e', script];
+    for (const a of argv) {
+      args.push(String(a));
+    }
+    execFile('osascript', args, { timeout: 4000 }, (err, stdout, stderr) => {
       if (err) {
         resolve({ ok: false, error: (stderr || err.message || String(err)).trim() });
       } else {
@@ -197,9 +206,33 @@ function runOsascript(script) {
   });
 }
 
+/**
+ * Sanitize tty device names from `ps` (allow only safe path characters).
+ * @param {string} tty
+ */
+function sanitizeTty(tty) {
+  const bare = String(tty || '')
+    .replace(/^\/dev\//, '')
+    .replace(/[^a-zA-Z0-9._-]/g, '');
+  return bare;
+}
+
+/**
+ * Sanitize macOS application names for osascript argv.
+ * @param {string} appName
+ */
+function sanitizeAppName(appName) {
+  return String(appName || '').replace(/[^\w .+-]/g, '').trim();
+}
+
 function activateMacApp(appName) {
-  const escaped = String(appName).replace(/"/g, '\\"');
-  return runOsascript(`tell application "${escaped}" to activate`);
+  const name = sanitizeAppName(appName);
+  if (!name) return Promise.resolve({ ok: false, error: 'empty-app' });
+  // argv[1] is the app name — never string-interpolated into the script body
+  return runOsascript(
+    'on run argv\n  tell application (item 1 of argv) to activate\nend run',
+    [name]
+  );
 }
 
 /**
@@ -207,35 +240,36 @@ function activateMacApp(appName) {
  * @param {string} tty
  */
 async function focusMacTerminalApp(tty) {
-  const bare = String(tty || '')
-    .replace(/^\/dev\//, '')
-    .replace(/"/g, '');
+  const bare = sanitizeTty(tty);
   if (!bare) {
     return activateMacApp('Terminal');
   }
   // Terminal.app exposes tty of each tab (often without /dev/)
+  // argv: item 1 = bare tty, item 2 = /dev/tty
   const script = `
-tell application "Terminal"
-  activate
-  set targetTty to "${bare}"
-  set targetTtyFull to "/dev/${bare}"
-  repeat with w in windows
-    try
-      set tabList to tabs of w
-      repeat with t in tabList
-        set tabTty to tty of t as text
-        if tabTty is targetTty or tabTty is targetTtyFull or tabTty ends with targetTty then
-          set selected of t to true
-          set frontmost of w to true
-          return "ok"
-        end if
-      end repeat
-    end try
-  end repeat
-  return "not-found"
-end tell
+on run argv
+  set targetTty to item 1 of argv
+  set targetTtyFull to item 2 of argv
+  tell application "Terminal"
+    activate
+    repeat with w in windows
+      try
+        set tabList to tabs of w
+        repeat with t in tabList
+          set tabTty to tty of t as text
+          if tabTty is targetTty or tabTty is targetTtyFull or tabTty ends with targetTty then
+            set selected of t to true
+            set frontmost of w to true
+            return "ok"
+          end if
+        end repeat
+      end try
+    end repeat
+    return "not-found"
+  end tell
+end run
 `;
-  const r = await runOsascript(script);
+  const r = await runOsascript(script, [bare, `/dev/${bare}`]);
   if (!r.ok || r.out === 'not-found') {
     return activateMacApp('Terminal');
   }
@@ -247,33 +281,33 @@ end tell
  * @param {string} tty
  */
 async function focusITerm(tty) {
-  const bare = String(tty || '')
-    .replace(/^\/dev\//, '')
-    .replace(/"/g, '');
+  const bare = sanitizeTty(tty);
   if (!bare) return activateMacApp('iTerm');
   const script = `
-tell application "iTerm"
-  activate
-  set targetTty to "${bare}"
-  set targetTtyFull to "/dev/${bare}"
-  repeat with w in windows
-    repeat with t in tabs of w
-      repeat with s in sessions of t
-        try
-          set sTty to tty of s as text
-          if sTty is targetTty or sTty is targetTtyFull or sTty ends with targetTty then
-            select t
-            select s
-            return "ok"
-          end if
-        end try
+on run argv
+  set targetTty to item 1 of argv
+  set targetTtyFull to item 2 of argv
+  tell application "iTerm"
+    activate
+    repeat with w in windows
+      repeat with t in tabs of w
+        repeat with s in sessions of t
+          try
+            set sTty to tty of s as text
+            if sTty is targetTty or sTty is targetTtyFull or sTty ends with targetTty then
+              select t
+              select s
+              return "ok"
+            end if
+          end try
+        end repeat
       end repeat
     end repeat
-  end repeat
-  return "not-found"
-end tell
+    return "not-found"
+  end tell
+end run
 `;
-  const r = await runOsascript(script);
+  const r = await runOsascript(script, [bare, `/dev/${bare}`]);
   if (!r.ok || r.out === 'not-found') {
     // iTerm app name may be iTerm2
     const r2 = await activateMacApp('iTerm2');
@@ -496,4 +530,7 @@ module.exports = {
   resolveTerminalHost,
   focusWindowsProcess,
   focusActiveGrokTerminal,
+  sanitizeTty,
+  sanitizeAppName,
+  activateMacApp,
 };

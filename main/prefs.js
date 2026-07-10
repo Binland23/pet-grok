@@ -22,6 +22,11 @@ const DEFAULTS = {
   /** Tray / menu-bar icon: 'grok' | 'match-pet' | theme id */
   trayIconId: 'grok',
   hooksAutoInstalled: false,
+  /**
+   * When true, user explicitly uninstalled hooks — do not reinstall on launch.
+   * Cleared when they install hooks again from the dashboard/menu.
+   */
+  hooksUserDisabled: false,
   visible: true,
 };
 

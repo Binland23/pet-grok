@@ -101,6 +101,9 @@ function resolveNodeBinary(opts = {}) {
 }
 
 /**
+ * Quote a path for shell use.
+ * POSIX: single-quote with `'\''` escaping so `$`, backticks, and `\` are literal.
+ * Windows: double-quote with `""` for embedded quotes.
  * @param {string} p
  * @param {string} [platform]
  */
@@ -109,7 +112,7 @@ function quoteForShell(p, platform = process.platform) {
   if (platform === 'win32') {
     return `"${s.replace(/"/g, '""')}"`;
   }
-  return `"${s.replace(/"/g, '\\"')}"`;
+  return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
 /**
@@ -245,8 +248,8 @@ function installHookScript(opts = {}) {
     '  echo "usage: pet-run.sh <state>" >&2',
     '  exit 2',
     'fi',
-    // Prefer absolute node when available
-    `NODE_BIN="${String(nodeBin).replace(/"/g, '\\"')}"`,
+    // Prefer absolute node when available (POSIX single-quote quoting)
+    `NODE_BIN=${quoteForShell(nodeBin, 'darwin')}`,
     'if [ ! -x "$NODE_BIN" ]; then NODE_BIN="$(command -v node 2>/dev/null || true)"; fi',
     'if [ -z "$NODE_BIN" ]; then NODE_BIN="node"; fi',
     'exec "$NODE_BIN" "$DIR/pet-state.js" "$STATE"',

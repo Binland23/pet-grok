@@ -36,6 +36,30 @@ describe('themes module (shipped listThemes / paths)', () => {
     assert.equal(themes.normalizeThemeId('removed-theme', ''), '');
   });
 
+  it('rejects path-traversal theme ids', () => {
+    assert.equal(themes.sanitizeThemeId('../../etc/passwd'), null);
+    assert.equal(themes.sanitizeThemeId('foo/bar'), null);
+    assert.equal(themes.normalizeThemeId('../../etc/passwd'), 'race-crab');
+    assert.equal(themes.normalizeThemeId('race-crab/../cloud-pup'), 'race-crab');
+  });
+
+  it('themeAssetAbs stays under theme asset roots', () => {
+    const abs = themes.themeAssetAbs('race-crab', 'frames/idle_00.png');
+    assert.ok(abs.includes('race-crab'));
+    assert.ok(fs.existsSync(abs), abs);
+    // Traversal in rel is stripped — must not escape renderer assets / themes
+    const evil = path.resolve(themes.themeAssetAbs('race-crab', '../../../package.json'));
+    const assetsRoot = path.resolve(themes.RENDERER_ASSETS) + path.sep;
+    const themesRoot = path.resolve(themes.THEMES_DIR) + path.sep;
+    assert.ok(
+      evil.startsWith(assetsRoot) || evil.startsWith(themesRoot) ||
+        evil === path.resolve(themes.RENDERER_ASSETS) ||
+        evil === path.resolve(themes.THEMES_DIR),
+      `unexpected path: ${evil}`
+    );
+    assert.notEqual(evil, path.resolve(path.join(__dirname, '..', 'package.json')));
+  });
+
   for (const expected of SHIPPED_THEMES) {
     it(`loadThemeJson reads theme.json for ${expected.id}`, () => {
       const meta = themes.loadThemeJson(expected.id);

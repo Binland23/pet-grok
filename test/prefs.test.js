@@ -10,6 +10,10 @@ describe('animation mode preference', () => {
     assert.equal(prefs.DEFAULTS.animationMode, 'fluid');
   });
 
+  it('defaults hooksUserDisabled to false', () => {
+    assert.equal(prefs.DEFAULTS.hooksUserDisabled, false);
+  });
+
   it('accepts the two supported modes', () => {
     assert.equal(prefs.normalizeAnimationMode('fluid'), 'fluid');
     assert.equal(prefs.normalizeAnimationMode('static'), 'static');

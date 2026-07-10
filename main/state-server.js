@@ -54,14 +54,24 @@ const EVENT_TO_STATE = {
   subagent_end: 'working',
 };
 
+const LOOPBACK_ADDRS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+
+/** Max POST body size (valid state payloads are tiny). */
+const MAX_BODY_BYTES = 4096;
+
 function isLoopback(addr) {
   if (!addr) return false;
-  return (
-    addr === '127.0.0.1' ||
-    addr === '::1' ||
-    addr === '::ffff:127.0.0.1' ||
-    addr.endsWith('127.0.0.1')
-  );
+  return LOOPBACK_ADDRS.has(addr);
+}
+
+/**
+ * Browsers always send Origin on cross-origin fetches; hooks/curl do not.
+ * Rejecting Origin blocks browser drive-by POSTs to the loopback control channel.
+ * @param {import('http').IncomingMessage} req
+ */
+function isBrowserOrigin(req) {
+  const origin = req.headers && req.headers.origin;
+  return typeof origin === 'string' && origin.length > 0;
 }
 
 /**
@@ -163,6 +173,13 @@ function startStateServer(onState, opts = {}) {
       return;
     }
 
+    // Browsers send Origin; hooks/curl never do. Block drive-by POSTs/GETs.
+    if (isBrowserOrigin(req)) {
+      res.writeHead(403, { 'Content-Type': 'text/plain' });
+      res.end('forbidden origin');
+      return;
+    }
+
     if (req.method === 'OPTIONS') {
       res.writeHead(204);
       res.end();
@@ -217,8 +234,26 @@ function startStateServer(onState, opts = {}) {
         url.startsWith('/event?'))
     ) {
       const chunks = [];
-      req.on('data', (c) => chunks.push(c));
+      let total = 0;
+      let tooLarge = false;
+      req.on('data', (c) => {
+        if (tooLarge) return;
+        total += c.length;
+        if (total > MAX_BODY_BYTES) {
+          tooLarge = true;
+          chunks.length = 0;
+          if (!res.writableEnded && !res.headersSent) {
+            res.writeHead(413, { 'Content-Type': 'text/plain' });
+            res.end('payload too large');
+          }
+          // Drain remaining data without buffering (do not destroy — keeps keep-alive healthy)
+          req.resume();
+          return;
+        }
+        chunks.push(c);
+      });
       req.on('end', () => {
+        if (tooLarge || res.writableEnded || res.headersSent) return;
         const raw = Buffer.concat(chunks).toString('utf8');
         const state = parseStateBody(raw, url);
         if (!state) {
@@ -283,6 +318,7 @@ function startStateServer(onState, opts = {}) {
 module.exports = {
   HOST,
   PORT,
+  MAX_BODY_BYTES,
   ALLOWED_STATES,
   STATE_ALIASES,
   EVENT_TO_STATE,
@@ -290,4 +326,5 @@ module.exports = {
   mapHookEventToState,
   startStateServer,
   isLoopback,
+  isBrowserOrigin,
 };

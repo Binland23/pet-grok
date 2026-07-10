@@ -51,9 +51,40 @@ function listThemes() {
   return out;
 }
 
+/**
+ * Theme ids are directory names under themes/. Reject path separators and `..`.
+ * @param {unknown} themeId
+ * @returns {string | null}
+ */
+function sanitizeThemeId(themeId) {
+  const id = String(themeId || '').trim();
+  if (!id) return null;
+  if (id.includes('..') || id.includes('/') || id.includes('\\') || id.includes('\0')) {
+    return null;
+  }
+  // Only allow simple slug-like ids (matches shipped themes and safe future ones)
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(id)) return null;
+  return id;
+}
+
+/**
+ * Resolve a path and ensure it stays under `base` (after realpath where possible).
+ * @param {string} base
+ * @param {string} candidate
+ * @returns {string | null}
+ */
+function pathUnderBase(base, candidate) {
+  const baseResolved = path.resolve(base);
+  const resolved = path.resolve(candidate);
+  const prefix = baseResolved.endsWith(path.sep) ? baseResolved : baseResolved + path.sep;
+  if (resolved === baseResolved || resolved.startsWith(prefix)) return resolved;
+  return null;
+}
+
 function loadThemeJson(themeId) {
-  const id = themeId || 'race-crab';
+  const id = sanitizeThemeId(themeId) || 'race-crab';
   const themePath = path.join(THEMES_DIR, id, 'theme.json');
+  if (!pathUnderBase(THEMES_DIR, themePath)) return null;
   try {
     return JSON.parse(fs.readFileSync(themePath, 'utf8'));
   } catch {
@@ -62,7 +93,7 @@ function loadThemeJson(themeId) {
 }
 
 function normalizeThemeId(themeId, fallback = 'race-crab') {
-  const id = String(themeId || '').trim();
+  const id = sanitizeThemeId(themeId);
   return id && loadThemeJson(id) ? id : fallback;
 }
 
@@ -72,7 +103,7 @@ function normalizeThemeId(themeId, fallback = 'race-crab') {
  * @param {'fluid' | 'static'} [mode] static → classic low-fps packs; fluid → 24fps
  */
 function themeAnimationsPath(themeId, mode = 'fluid') {
-  const id = themeId || 'race-crab';
+  const id = sanitizeThemeId(themeId) || 'race-crab';
   const preferStatic = String(mode || '').toLowerCase() === 'static';
   /** @type {string[]} */
   const candidates = preferStatic
@@ -97,29 +128,43 @@ function themeAnimationsPath(themeId, mode = 'fluid') {
   );
 }
 
+/**
+ * Absolute path to a theme asset, constrained under renderer assets / themes.
+ * @param {string} [themeId]
+ * @param {string} [rel]
+ * @returns {string}
+ */
 function themeAssetAbs(themeId, rel) {
-  const id = themeId || 'race-crab';
-  const safe = String(rel || '')
+  const id = sanitizeThemeId(themeId) || 'race-crab';
+  const parts = String(rel || '')
     .replace(/\\/g, '/')
-    .replace(/\.\./g, '');
-  const parts = safe.split('/').filter(Boolean);
-  const candidates = [
-    path.join(RENDERER_ASSETS, id, ...parts),
-    path.join(THEMES_DIR, id, ...parts),
-    path.join(THEMES_DIR, id, 'sprites', ...parts),
-    path.join(RENDERER_ASSETS, 'race-crab', ...parts),
+    .split('/')
+    .filter((p) => p && p !== '.' && p !== '..');
+  const bases = [
+    path.join(RENDERER_ASSETS, id),
+    path.join(THEMES_DIR, id),
+    path.join(THEMES_DIR, id, 'sprites'),
+    path.join(RENDERER_ASSETS, 'race-crab'),
   ];
-  for (const p of candidates) {
-    if (fs.existsSync(p)) return p;
+  for (const base of bases) {
+    const candidate = path.join(base, ...parts);
+    const safe = pathUnderBase(base, candidate);
+    if (safe && fs.existsSync(safe)) return safe;
   }
-  return path.join(RENDERER_ASSETS, 'race-crab', ...parts);
+  // Fallback under race-crab assets only (never outside)
+  const fallbackBase = path.join(RENDERER_ASSETS, 'race-crab');
+  const fallback = path.join(fallbackBase, ...parts);
+  return pathUnderBase(fallbackBase, fallback) || path.join(fallbackBase, 'idle.png');
 }
 
 module.exports = {
   THEMES_DIR,
+  RENDERER_ASSETS,
   listThemes,
   loadThemeJson,
   normalizeThemeId,
+  sanitizeThemeId,
+  pathUnderBase,
   themeAnimationsPath,
   themeAssetAbs,
 };

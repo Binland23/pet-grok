@@ -19,18 +19,20 @@ const {
   startStateServer,
 } = require('../main/state-server');
 
-function post(port, urlPath, body, contentType) {
+function post(port, urlPath, body, contentType, extraHeaders) {
   return new Promise((resolve, reject) => {
+    const headers = {
+      'Content-Type': contentType || 'text/plain',
+      'Content-Length': Buffer.byteLength(body),
+      ...(extraHeaders || {}),
+    };
     const req = http.request(
       {
         hostname: '127.0.0.1',
         port,
         path: urlPath,
         method: 'POST',
-        headers: {
-          'Content-Type': contentType || 'text/plain',
-          'Content-Length': Buffer.byteLength(body),
-        },
+        headers,
       },
       (res) => {
         const chunks = [];
@@ -161,11 +163,19 @@ describe('hooks payload (real makeHooksPayload)', () => {
     const macCmd = mac.hooks.PreToolUse[0].hooks[0];
     assert.equal(macCmd.type, 'command');
     assert.equal(macCmd.async, true);
-    assert.match(macCmd.command, /\/opt\/homebrew\/bin\/node|node/);
+    // POSIX single-quote quoting
+    assert.match(macCmd.command, /'\/opt\/homebrew\/bin\/node'|node/);
     assert.match(macCmd.command, /pet-state\.js/);
     assert.match(macCmd.command, /working/);
     // Tool events get empty matcher (match all) like Clawd
     assert.equal(mac.hooks.PreToolUse[0].matcher, '');
+  });
+
+  it('quoteForShell uses single quotes on POSIX (no $ expansion)', () => {
+    const q = hooks.quoteForShell("/tmp/foo's/node", 'darwin');
+    assert.equal(q, `'/tmp/foo'\\''s/node'`);
+    const win = hooks.quoteForShell('C:\\Program Files\\node.exe', 'win32');
+    assert.equal(win, '"C:\\Program Files\\node.exe"');
   });
 
   it('relative command mode still available for tests', () => {
@@ -311,6 +321,33 @@ describe('state server HTTP (real startStateServer)', () => {
   it('rejects unknown state with 400', async () => {
     const r = await post(port, '/state', 'not-a-state');
     assert.equal(r.status, 400);
+  });
+
+  it('rejects browser Origin header (drive-by)', async () => {
+    received.length = 0;
+    const r = await post(port, '/state', 'thinking', 'text/plain', {
+      Origin: 'https://evil.example',
+    });
+    assert.equal(r.status, 403);
+    assert.deepEqual(received, []);
+  });
+
+  it('rejects oversized POST body with 413', async () => {
+    received.length = 0;
+    const big = 'x'.repeat(5000);
+    const r = await post(port, '/state', big);
+    assert.equal(r.status, 413);
+    assert.deepEqual(received, []);
+  });
+
+  it('isLoopback uses an exact allow-list', () => {
+    const { isLoopback } = require('../main/state-server');
+    assert.equal(isLoopback('127.0.0.1'), true);
+    assert.equal(isLoopback('::1'), true);
+    assert.equal(isLoopback('::ffff:127.0.0.1'), true);
+    assert.equal(isLoopback('10.0.0.1'), false);
+    assert.equal(isLoopback('evil127.0.0.1'), false);
+    assert.equal(isLoopback('192.168.1.127.0.0.1'), false);
   });
 
   it('setState applies allowed states and rejects invalid ones', async () => {

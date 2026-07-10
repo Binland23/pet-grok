@@ -295,7 +295,7 @@ function createWindow() {
       preload: path.join(__dirname, '..', 'preload', 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
     },
   });
 
@@ -521,13 +521,19 @@ function buildAppMenu() {
     {
       label: installed ? 'Uninstall Grok Hooks' : 'Install Grok Hooks',
       click: () => {
+        const st = getState();
         if (hooks.isInstalled()) {
           hooks.uninstallHooks();
+          st.hooksUserDisabled = true;
+          st.hooksAutoInstalled = false;
           console.log('[hooks] uninstalled', hooks.getHookFilePath());
         } else {
           const p = hooks.installHooks();
+          st.hooksUserDisabled = false;
+          st.hooksAutoInstalled = true;
           console.log('[hooks] installed', p);
         }
+        prefs.save(st);
         rebuildTray();
         broadcastDashboardSnapshot();
       },
@@ -624,7 +630,8 @@ function applySettingsPatch(patch) {
   }
   if (typeof patch.visible === 'boolean') s.visible = patch.visible;
   if (patch.themeId != null && String(patch.themeId).trim()) {
-    s.themeId = String(patch.themeId).trim();
+    // Only accept installed theme ids (blocks path traversal via themeId)
+    s.themeId = themes.normalizeThemeId(String(patch.themeId).trim());
   }
   if (patch.trayIconId != null && isValidTrayIconId(patch.trayIconId)) {
     s.trayIconId = String(patch.trayIconId).trim();
@@ -689,7 +696,7 @@ function openDashboard() {
       preload: path.join(__dirname, '..', 'preload', 'dashboard-preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
     },
   });
 
@@ -736,9 +743,28 @@ function createTray() {
   });
 }
 
+/**
+ * Restrict IPC handlers to the expected BrowserWindow.
+ * @param {Electron.IpcMainInvokeEvent | Electron.IpcMainEvent} event
+ * @param {BrowserWindow | null} win
+ */
+function isSenderWindow(event, win) {
+  if (!win || win.isDestroyed()) return false;
+  try {
+    return event.sender === win.webContents;
+  } catch {
+    return false;
+  }
+}
+
 function registerIpc() {
-  ipcMain.handle('pet:get-theme', () => loadTheme(getState().themeId));
-  ipcMain.handle('pet:get-prefs', () => {
+  // —— Pet overlay (mainWindow only) ——
+  ipcMain.handle('pet:get-theme', (e) => {
+    if (!isSenderWindow(e, mainWindow)) return null;
+    return loadTheme(getState().themeId);
+  });
+  ipcMain.handle('pet:get-prefs', (e) => {
+    if (!isSenderWindow(e, mainWindow)) return null;
     const s = getState();
     return {
       mute: s.mute,
@@ -748,8 +774,12 @@ function registerIpc() {
       visible: s.visible !== false,
     };
   });
-  ipcMain.handle('pet:get-push-history', () => pushHistory.slice(-20));
-  ipcMain.handle('pet:get-animations', (_e, mode) => {
+  ipcMain.handle('pet:get-push-history', (e) => {
+    if (!isSenderWindow(e, mainWindow)) return [];
+    return pushHistory.slice(-20);
+  });
+  ipcMain.handle('pet:get-animations', (e, mode) => {
+    if (!isSenderWindow(e, mainWindow)) return null;
     const animMode = String(mode || 'fluid').toLowerCase() === 'static' ? 'static' : 'fluid';
     const p = themes.themeAnimationsPath(getState().themeId, animMode);
     try {
@@ -759,32 +789,49 @@ function registerIpc() {
       return null;
     }
   });
-  ipcMain.handle('pet:asset-path', (_e, rel) => {
+  ipcMain.handle('pet:asset-path', (e, rel) => {
+    if (!isSenderWindow(e, mainWindow)) return '';
     const abs = themes.themeAssetAbs(getState().themeId, rel);
     return platform.pathToAssetUrl(abs);
   });
 
-  // —— Dashboard ——
-  ipcMain.handle('dashboard:get-snapshot', () => buildDashboardSnapshot());
-  ipcMain.handle('dashboard:apply-settings', (_e, patch) => {
+  // —— Dashboard only ——
+  ipcMain.handle('dashboard:get-snapshot', (e) => {
+    if (!isSenderWindow(e, dashboardWindow)) return null;
+    return buildDashboardSnapshot();
+  });
+  ipcMain.handle('dashboard:apply-settings', (e, patch) => {
+    if (!isSenderWindow(e, dashboardWindow)) return null;
     return applySettingsPatch(patch && typeof patch === 'object' ? patch : {});
   });
-  ipcMain.handle('dashboard:set-theme', (_e, themeId) => {
+  ipcMain.handle('dashboard:set-theme', (e, themeId) => {
+    if (!isSenderWindow(e, dashboardWindow)) return null;
     return applySettingsPatch({ themeId: String(themeId || 'race-crab') });
   });
-  ipcMain.handle('dashboard:install-hooks', () => {
+  ipcMain.handle('dashboard:install-hooks', (e) => {
+    if (!isSenderWindow(e, dashboardWindow)) return null;
     const p = hooks.installHooks();
     console.log('[hooks] installed from dashboard', p);
+    const s = getState();
+    s.hooksUserDisabled = false;
+    s.hooksAutoInstalled = true;
+    prefs.save(s);
     rebuildTray();
     return buildDashboardSnapshot();
   });
-  ipcMain.handle('dashboard:uninstall-hooks', () => {
+  ipcMain.handle('dashboard:uninstall-hooks', (e) => {
+    if (!isSenderWindow(e, dashboardWindow)) return null;
     hooks.uninstallHooks();
     console.log('[hooks] uninstalled from dashboard');
+    const s = getState();
+    s.hooksUserDisabled = true;
+    s.hooksAutoInstalled = false;
+    prefs.save(s);
     rebuildTray();
     return buildDashboardSnapshot();
   });
-  ipcMain.handle('dashboard:open-health', async () => {
+  ipcMain.handle('dashboard:open-health', async (e) => {
+    if (!isSenderWindow(e, dashboardWindow)) return { ok: false, lastState: lastKnownState };
     if (!stateServer) return { ok: false, lastState: lastKnownState };
     return {
       ok: true,
@@ -796,10 +843,13 @@ function registerIpc() {
   /**
    * Manually force a pet state from the dashboard.
    * Enters manual mode: pose sticks (including wake/done/WEEEE) and hooks are ignored.
-   * @param {unknown} _e
+   * @param {Electron.IpcMainInvokeEvent} e
    * @param {unknown} state
    */
-  ipcMain.handle('dashboard:set-state', (_e, state) => {
+  ipcMain.handle('dashboard:set-state', (e, state) => {
+    if (!isSenderWindow(e, dashboardWindow)) {
+      return { ok: false, error: 'forbidden' };
+    }
     const s = normalizePetState(state);
     if (!ALLOWED_STATES.has(s)) {
       return { ok: false, error: `unknown state: ${s}`, ...buildDashboardSnapshot() };
@@ -814,10 +864,13 @@ function registerIpc() {
   });
   /**
    * Switch between auto (hooks) and manual (dashboard lock) state control.
-   * @param {unknown} _e
+   * @param {Electron.IpcMainInvokeEvent} e
    * @param {unknown} mode
    */
-  ipcMain.handle('dashboard:set-state-mode', (_e, mode) => {
+  ipcMain.handle('dashboard:set-state-mode', (e, mode) => {
+    if (!isSenderWindow(e, dashboardWindow)) {
+      return { ok: false, error: 'forbidden' };
+    }
     const m = String(mode || '')
       .trim()
       .toLowerCase();
@@ -837,13 +890,15 @@ function registerIpc() {
       ...buildDashboardSnapshot(),
     };
   });
-  ipcMain.on('dashboard:close', () => {
+  ipcMain.on('dashboard:close', (e) => {
+    if (!isSenderWindow(e, dashboardWindow)) return;
     if (dashboardWindow && !dashboardWindow.isDestroyed()) {
       dashboardWindow.close();
     }
   });
 
-  ipcMain.on('pet:set-ignore', (_e, ignore) => {
+  ipcMain.on('pet:set-ignore', (e, ignore) => {
+    if (!isSenderWindow(e, mainWindow)) return;
     if (!mainWindow || mainWindow.isDestroyed()) return;
     if (ignore) {
       mainWindow.setIgnoreMouseEvents(true, { forward: true });
@@ -857,7 +912,8 @@ function registerIpc() {
    * Repeated setPosition() on frameless/transparent windows (esp. Windows DPI)
    * can accumulate size growth; always re-apply width/height from prefs.
    */
-  ipcMain.on('pet:drag-start', () => {
+  ipcMain.on('pet:drag-start', (e) => {
+    if (!isSenderWindow(e, mainWindow)) return;
     if (!mainWindow || mainWindow.isDestroyed()) return;
     const cursor = screen.getCursorScreenPoint();
     const [wx, wy] = mainWindow.getPosition();
@@ -868,7 +924,8 @@ function registerIpc() {
     mainWindow.setBounds({ x: wx, y: wy, width: size, height: size });
   });
 
-  ipcMain.on('pet:drag-move', () => {
+  ipcMain.on('pet:drag-move', (e) => {
+    if (!isSenderWindow(e, mainWindow)) return;
     if (!mainWindow || mainWindow.isDestroyed() || !mainWindow._dragOffset) return;
     const cursor = screen.getCursorScreenPoint();
     const size = windowSize();
@@ -877,7 +934,8 @@ function registerIpc() {
     mainWindow.setBounds({ x: nx, y: ny, width: size, height: size });
   });
 
-  ipcMain.on('pet:drag-end', () => {
+  ipcMain.on('pet:drag-end', (e) => {
+    if (!isSenderWindow(e, mainWindow)) return;
     if (!mainWindow || mainWindow.isDestroyed()) return;
     mainWindow._dragOffset = null;
     const size = windowSize();
@@ -890,15 +948,18 @@ function registerIpc() {
     prefs.save(s);
   });
 
-  ipcMain.on('pet:wake-from-idle', () => {
+  ipcMain.on('pet:wake-from-idle', (e) => {
+    if (!isSenderWindow(e, mainWindow)) return;
     pushState('idle');
   });
 
-  ipcMain.on('pet:context-menu', () => {
+  ipcMain.on('pet:context-menu', (e) => {
+    if (!isSenderWindow(e, mainWindow)) return;
     popupPetMenu();
   });
 
-  ipcMain.handle('pet:focus-grok-terminal', async () => {
+  ipcMain.handle('pet:focus-grok-terminal', async (e) => {
+    if (!isSenderWindow(e, mainWindow)) return { ok: false, reason: 'forbidden' };
     try {
       const result = await focusActiveGrokTerminal();
       console.log('[focus-grok-terminal]', result);
@@ -910,16 +971,22 @@ function registerIpc() {
   });
 }
 
-function maybeAutoInstallHooks() {
+/**
+ * Install/refresh hooks on launch unless the user explicitly uninstalled them.
+ */
+function ensureHooksOnLaunch() {
   const s = getState();
-  if (!s.hooksAutoInstalled && !hooks.isInstalled()) {
+  if (s.hooksUserDisabled) {
+    console.log('[hooks] skipped — user disabled (hooksUserDisabled)');
+    return;
+  }
+  try {
     const p = hooks.installHooks();
-    console.log('[hooks] auto-installed on first launch:', p);
+    console.log('[hooks] installed/refreshed', p);
     s.hooksAutoInstalled = true;
     prefs.save(s);
-  } else if (hooks.isInstalled()) {
-    s.hooksAutoInstalled = true;
-    prefs.save(s);
+  } catch (err) {
+    console.error('[hooks] install failed', err);
   }
 }
 
@@ -963,16 +1030,8 @@ app.whenReady().then(async () => {
   createWindow();
   createTray();
 
-  // Always install/refresh hooks so Grok TUI can reach this process
-  try {
-    const p = hooks.installHooks();
-    console.log('[hooks] installed/refreshed', p);
-    const s = getState();
-    s.hooksAutoInstalled = true;
-    prefs.save(s);
-  } catch (err) {
-    console.error('[hooks] install failed', err);
-  }
+  // Install/refresh hooks unless the user explicitly uninstalled them (S11)
+  ensureHooksOnLaunch();
   rebuildTray();
 
   // Start idle (not mid-agent); only idle uses quiet timeout
