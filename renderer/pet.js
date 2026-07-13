@@ -1,7 +1,11 @@
 (function () {
   const canvas = document.getElementById('petCanvas');
   const ctx = canvas.getContext('2d');
+  const petAreaEl = document.getElementById('petArea');
   const statusEl = document.getElementById('status');
+  const statusLabelEl = document.getElementById('statusLabel');
+  const statusDetailEl = document.getElementById('statusDetail');
+  const statusToggleEl = document.getElementById('statusToggle');
   const api = window.petAPI;
   const { advanceFrame, shouldPreserveFrame, framePathsForMode } = window.PetAnimationLoop;
   const ASSET = './assets/race-crab/';
@@ -43,13 +47,18 @@
   let lastTs = performance.now();
   let celebrateTimer = null;
   let wakeTimer = null;
+  let alertTimer = null;
   let clickTimer = null;
+  const ALERT_SETTLE_MS = 4000;
   let celebrateMs = 1800;
   let wakeMs = 900;
   let dragging = false;
   let dragMoved = false;
   let overPet = false;
+  /** True while pointer is over the pet body or the status chevron chrome. */
+  let overChrome = false;
   let pointerDown = false;
+  let statusToggleBusy = false;
   let downX = 0;
   let downY = 0;
   let downAt = 0;
@@ -63,6 +72,21 @@
    */
   let stickyHold = false;
   let muted = false;
+  /** Show liquid-glass status bubble under the pet (pref, default on). */
+  let showStatus = true;
+  /**
+   * Latest activity detail from hooks (logical value).
+   * Display is throttled so the line stays readable.
+   */
+  let lastDetail = '';
+  /** Currently shown activity line (may lag lastDetail during hold). */
+  let displayedDetail = '';
+  /** Newest detail waiting until the hold window expires. */
+  let pendingDetail = null;
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let detailHoldTimer = null;
+  /** Minimum time each activity line stays put so it can be read. */
+  const DETAIL_HOLD_MS = 6000;
   /** User preference from dashboard: fluid (24fps) | static (classic ~9fps packs) */
   let animationMode = 'fluid';
   /**
@@ -316,10 +340,234 @@
     click: 'WEEEE',
   };
 
-  function setStatus(text) {
+  function applyShowStatus(visible) {
+    showStatus = !!visible;
+    if (statusEl) statusEl.classList.toggle('hidden', !showStatus);
+    if (statusToggleEl) {
+      statusToggleEl.classList.toggle('status-on', showStatus);
+      statusToggleEl.setAttribute('aria-pressed', showStatus ? 'true' : 'false');
+      statusToggleEl.setAttribute(
+        'aria-label',
+        showStatus ? 'Hide status bubble' : 'Show status bubble'
+      );
+      statusToggleEl.title = showStatus ? 'Hide status' : 'Show status';
+    }
+  }
+
+  function setStatusToggleVisible(visible) {
+    if (!statusToggleEl) return;
+    statusToggleEl.classList.toggle('visible', !!visible);
+  }
+
+  /**
+   * Hit-test the hover chevron (with a little padding for easy targeting).
+   * @param {number} clientX
+   * @param {number} clientY
+   */
+  function hitTestToggle(clientX, clientY) {
+    if (!statusToggleEl) return false;
+    const r = statusToggleEl.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return false;
+    const pad = 6;
+    return (
+      clientX >= r.left - pad &&
+      clientX <= r.right + pad &&
+      clientY >= r.top - pad &&
+      clientY <= r.bottom + pad
+    );
+  }
+
+  /**
+   * Hit-test the liquid-glass status bubble when it is visible.
+   * @param {number} clientX
+   * @param {number} clientY
+   */
+  function hitTestStatus(clientX, clientY) {
+    if (!showStatus || !statusEl || statusEl.classList.contains('hidden')) return false;
+    const r = statusEl.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return false;
+    const pad = 6;
+    return (
+      clientX >= r.left - pad &&
+      clientX <= r.right + pad &&
+      clientY >= r.top - pad &&
+      clientY <= r.bottom + pad
+    );
+  }
+
+  /**
+   * Soft corridor from the lower pet area down through the chevron to the
+   * status bubble — keeps chrome hot while moving between them.
+   * @param {number} clientX
+   * @param {number} clientY
+   */
+  function hitTestStatusBridge(clientX, clientY) {
+    if (!showStatus || !statusEl || statusEl.classList.contains('hidden')) return false;
+    if (!petAreaEl) return hitTestStatus(clientX, clientY);
+    const petR = petAreaEl.getBoundingClientRect();
+    const stR = statusEl.getBoundingClientRect();
+    if (petR.width < 1 || stR.width < 1) return false;
+    const top = petR.top + petR.height * 0.52;
+    const bottom = Math.max(stR.bottom, petR.bottom) + 6;
+    const left = Math.min(petR.left + petR.width * 0.22, stR.left - 8);
+    const right = Math.max(petR.right - petR.width * 0.22, stR.right + 8);
+    return (
+      clientX >= left &&
+      clientX <= right &&
+      clientY >= top &&
+      clientY <= bottom
+    );
+  }
+
+  async function toggleStatusBubble() {
+    if (statusToggleBusy) return;
+    statusToggleBusy = true;
+    const next = !showStatus;
+    // Optimistic UI — window height catches up via prefs IPC
+    applyShowStatus(next);
+    setStatus(current || 'idle', lastDetail);
+    try {
+      if (api && api.setShowStatus) {
+        const result = await api.setShowStatus(next);
+        if (result && typeof result.showStatus === 'boolean') {
+          applyShowStatus(result.showStatus);
+          setStatus(current || 'idle', lastDetail);
+        }
+      }
+    } catch (err) {
+      console.warn('[status toggle]', err);
+      applyShowStatus(!next);
+      setStatus(current || 'idle', lastDetail);
+    } finally {
+      statusToggleBusy = false;
+    }
+  }
+
+  const STATE_DETAIL_DEFAULTS = {
+    thinking: 'Thinking it through…',
+    working: 'Getting things done…',
+    done: 'All done!',
+    alert: 'Needs your attention',
+  };
+
+  function paintDetailLine(text) {
+    displayedDetail = text || '';
+    if (!statusDetailEl) return;
+    if (displayedDetail) {
+      statusDetailEl.textContent = displayedDetail;
+      statusDetailEl.classList.add('has-detail');
+    } else {
+      statusDetailEl.textContent = '';
+      statusDetailEl.classList.remove('has-detail');
+    }
+  }
+
+  function clearDetailHoldTimer() {
+    if (detailHoldTimer) {
+      clearTimeout(detailHoldTimer);
+      detailHoldTimer = null;
+    }
+  }
+
+  function armDetailHold() {
+    clearDetailHoldTimer();
+    detailHoldTimer = setTimeout(() => {
+      detailHoldTimer = null;
+      // Promote the newest queued line (or keep current if none pending)
+      if (pendingDetail !== null) {
+        const next = pendingDetail;
+        pendingDetail = null;
+        if (next !== displayedDetail) {
+          paintDetailLine(next);
+          lastDetail = next;
+          if (next) armDetailHold();
+          return;
+        }
+      }
+      // Hold window finished with no newer line — keep showing current text
+      // until a state transition clears it (idle/sleep) or a new detail arrives.
+    }, DETAIL_HOLD_MS);
+  }
+
+  /**
+   * Show an activity line, holding each one long enough to read.
+   * Rapid tool churn is coalesced: only the latest line wins after the hold.
+   * @param {string} detail
+   * @param {{ force?: boolean }} [opts] force bypasses hold (idle clear, done, etc.)
+   */
+  function presentDetail(detail, opts = {}) {
+    const next = String(detail || '').trim();
+    const force = !!opts.force;
+
+    if (force) {
+      clearDetailHoldTimer();
+      pendingDetail = null;
+      lastDetail = next;
+      paintDetailLine(next);
+      // Done / alert still get a readable hold before idle clears them
+      if (next) armDetailHold();
+      return;
+    }
+
+    // Empty updates during an active agent turn shouldn't wipe a good line
+    if (!next) {
+      if (displayedDetail) return;
+      lastDetail = '';
+      paintDetailLine('');
+      return;
+    }
+
+    lastDetail = next;
+    if (!displayedDetail || displayedDetail === next) {
+      if (displayedDetail !== next) paintDetailLine(next);
+      if (!detailHoldTimer) armDetailHold();
+      return;
+    }
+
+    // Hold still active — queue and keep the current readable line
+    if (detailHoldTimer) {
+      pendingDetail = next;
+      return;
+    }
+    paintDetailLine(next);
+    armDetailHold();
+  }
+
+  /**
+   * Update the liquid-glass status bubble.
+   * @param {string} text state name
+   * @param {string} [detail] optional activity line
+   */
+  function setStatus(text, detail) {
+    if (!statusEl) return;
     const key = String(text || '').toLowerCase();
-    statusEl.textContent = STATUS_LABELS[key] || text;
-    statusEl.className = 'st-' + key;
+    const label = STATUS_LABELS[key] || text;
+    if (statusLabelEl) statusLabelEl.textContent = label;
+    else statusEl.textContent = label;
+
+    const settleStates = key === 'idle' || key === 'sleep' || key === 'wake' || key === 'click';
+    const forceStates = settleStates || key === 'done' || key === 'alert';
+
+    if (typeof detail === 'string') {
+      const trimmed = detail.trim();
+      if (settleStates) {
+        presentDetail('', { force: true });
+      } else if (trimmed) {
+        presentDetail(trimmed, { force: forceStates && (key === 'done' || key === 'alert') });
+      } else if (STATE_DETAIL_DEFAULTS[key]) {
+        presentDetail(STATE_DETAIL_DEFAULTS[key], { force: key === 'done' || key === 'alert' });
+      } else if (!settleStates) {
+        // Keep held line during empty working/thinking posts
+        presentDetail(displayedDetail || lastDetail || STATE_DETAIL_DEFAULTS[key] || '');
+      }
+    } else if (settleStates) {
+      presentDetail('', { force: true });
+    } else if (STATE_DETAIL_DEFAULTS[key] && !displayedDetail && !lastDetail) {
+      presentDetail(STATE_DETAIL_DEFAULTS[key]);
+    }
+
+    statusEl.className = 'st-' + key + (showStatus ? '' : ' hidden');
+    // Only flash the chip on state label changes, not every detail refresh
     statusEl.classList.add('flash');
     void statusEl.offsetWidth;
     setTimeout(() => statusEl.classList.remove('flash'), 200);
@@ -334,6 +582,13 @@
     // releaseStickyHold() and by explicit sticky:false.
     if (typeof options.sticky === 'boolean') {
       stickyHold = options.sticky;
+    }
+
+    // Detail can update even when the animation frame is preserved (held in setStatus)
+    if (Object.prototype.hasOwnProperty.call(options, 'detail')) {
+      lastDetail = options.detail == null ? '' : String(options.detail).trim();
+    } else if (STATE_DETAIL_DEFAULTS[next] && !lastDetail) {
+      lastDetail = STATE_DETAIL_DEFAULTS[next];
     }
 
     // If fluid/static packs are still loading (mode toggle), wait then re-apply.
@@ -361,7 +616,11 @@
       mode,
       playOnce,
     });
-    if (alreadyPlaying) return;
+    if (alreadyPlaying) {
+      // Still refresh the glass bubble so tool churn shows up mid-working.
+      setStatus(next, lastDetail);
+      return;
+    }
 
     // Harness / external states cancel a local click ack
     if (next !== 'click') {
@@ -371,6 +630,7 @@
 
     if (celebrateTimer) { clearTimeout(celebrateTimer); celebrateTimer = null; }
     if (wakeTimer) { clearTimeout(wakeTimer); wakeTimer = null; }
+    if (alertTimer) { clearTimeout(alertTimer); alertTimer = null; }
 
     if (next === 'wake') {
       applyState('wake');
@@ -399,6 +659,20 @@
       celebrateTimer = setTimeout(() => setState('idle'), ms);
       return;
     }
+    if (next === 'alert') {
+      applyState('alert');
+      if (stickyHold) {
+        mode = 'play';
+        playOnce = false;
+        return;
+      }
+      // Brief attention flash, then idle — never stick on alert forever
+      // (Grok Notification / PostToolUseFailure must not block sleep).
+      mode = 'play';
+      playOnce = false;
+      alertTimer = setTimeout(() => setState('idle'), ALERT_SETTLE_MS);
+      return;
+    }
     if (next === 'click') {
       if (stickyHold) {
         // Dashboard WEEEE: loop the bounce instead of restoring prior state
@@ -416,24 +690,26 @@
     applyState(next);
   }
 
-  /** Leave sticky lock when the dashboard switches back to Auto. */
+  /**
+   * Leave sticky lock when the dashboard switches back to Auto.
+   * Always return to idle — a manual lock is not proof the agent is mid-turn.
+   * Real hooks will re-drive thinking/working if a turn is actually running.
+   */
   function releaseStickyHold() {
     stickyHold = false;
     if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
     if (celebrateTimer) { clearTimeout(celebrateTimer); celebrateTimer = null; }
     if (wakeTimer) { clearTimeout(wakeTimer); wakeTimer = null; }
+    if (alertTimer) { clearTimeout(alertTimer); alertTimer = null; }
     clickPulse = 0;
+    lastDetail = '';
+    presentDetail('', { force: true });
 
     const settle = () => {
-      // One-shot poses don't make sense as permanent auto states — settle to idle
-      if (current === 'wake' || current === 'done' || current === 'click') {
-        applyState('idle');
-      } else if (current === 'thinking' || current === 'working' || current === 'alert') {
-        // Keep continuous agent poses; re-apply so static packs take effect if needed
-        applyState(current);
-      } else {
-        applyState(current || 'idle');
-      }
+      // Force a clean baseline for every locked pose (working/thinking/alert/
+      // wake/done/click/sleep/…). Keeping continuous agent poses here left the
+      // pet stuck on "working" forever after Auto with no live hooks.
+      setState('idle', { sticky: false, force: true });
     };
 
     if (desiredPackMode() !== loadedPackMode) {
@@ -499,8 +775,15 @@
     } else {
       scheduleHold(name);
     }
-    setStatus(name);
-    console.log('[pet] applied state', name, 'frames=', (anims[name] && anims[name].frames.length) || 0, 'sticky=', stickyHold);
+    // Idle-ish poses drop the activity line (forced); agent poses keep / hold detail.
+    if (name === 'idle' || name === 'sleep' || name === 'wake' || name === 'click') {
+      setStatus(name, '');
+    } else if (name === 'done') {
+      setStatus(name, lastDetail || STATE_DETAIL_DEFAULTS.done);
+    } else {
+      setStatus(name, lastDetail || STATE_DETAIL_DEFAULTS[name] || '');
+    }
+    console.log('[pet] applied state', name, 'frames=', (anims[name] && anims[name].frames.length) || 0, 'sticky=', stickyHold, 'detail=', lastDetail || '-');
   }
 
   function draw(ts) {
@@ -624,12 +907,30 @@
 
   function updateIgnore(x, y) {
     if (pointerDown || dragging) return;
-    const hit = hitTest(x, y);
-    if (hit !== overPet) {
-      overPet = hit;
+    const onPet = hitTest(x, y);
+    const onStatus = hitTestStatus(x, y);
+    const onBridge = hitTestStatusBridge(x, y);
+    // Chevron stays hittable while chrome is hot, or when arriving via pet /
+    // status / bridge (so hover over the bubble also reveals the arrow).
+    const onToggle =
+      hitTestToggle(x, y) &&
+      (overChrome ||
+        onPet ||
+        onStatus ||
+        onBridge ||
+        (statusToggleEl && statusToggleEl.classList.contains('visible')));
+    const hit = onPet || onToggle || onStatus || onBridge;
+    overPet = onPet;
+    if (hit !== overChrome) {
+      overChrome = hit;
+      setStatusToggleVisible(hit);
+      if (petAreaEl) petAreaEl.classList.toggle('hot', hit);
       if (api) api.setIgnoreMouse(!hit);
+    } else if (hit) {
+      // Stay hot; refresh toggle visibility (e.g. after status on/off reflow)
+      setStatusToggleVisible(true);
     }
-    if (hit && current === 'sleep') {
+    if (onPet && current === 'sleep') {
       if (api) api.wakeFromIdle();
       else setState('idle');
     }
@@ -643,6 +944,8 @@
     downY = clientY;
     downAt = performance.now();
     overPet = true;
+    overChrome = true;
+    setStatusToggleVisible(true);
     if (api) api.setIgnoreMouse(false);
   }
 
@@ -684,7 +987,13 @@
     onPointerMove(e.clientX, e.clientY);
   });
   window.addEventListener('mousedown', (e) => {
-    if (!hitTest(e.clientX, e.clientY) || e.button !== 0) return;
+    if (e.button !== 0) return;
+    // Chevron owns its click — don't start drag / focus-terminal
+    if (hitTestToggle(e.clientX, e.clientY)) {
+      e.preventDefault();
+      return;
+    }
+    if (!hitTest(e.clientX, e.clientY)) return;
     beginPotentialDrag(e.clientX, e.clientY);
     e.preventDefault();
   });
@@ -692,6 +1001,10 @@
     onPointerUp();
   });
   window.addEventListener('contextmenu', (e) => {
+    if (hitTestToggle(e.clientX, e.clientY)) {
+      e.preventDefault();
+      return;
+    }
     if (!hitTest(e.clientX, e.clientY)) return;
     e.preventDefault();
     pointerDown = false;
@@ -700,16 +1013,44 @@
     if (api) { api.setIgnoreMouse(false); api.showContextMenu(); }
   });
   document.addEventListener('mouseleave', () => {
-    if (!pointerDown && !dragging && api) { overPet = false; api.setIgnoreMouse(true); }
+    if (!pointerDown && !dragging && api) {
+      overPet = false;
+      overChrome = false;
+      setStatusToggleVisible(false);
+      if (petAreaEl) petAreaEl.classList.remove('hot');
+      api.setIgnoreMouse(true);
+    }
   });
+
+  if (statusToggleEl) {
+    statusToggleEl.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (api) api.setIgnoreMouse(false);
+    });
+    statusToggleEl.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleStatusBubble();
+    });
+  }
 
   async function init() {
     if (api) {
       try {
         const initialPrefs = await api.getPrefs();
         if (initialPrefs && typeof initialPrefs.mute === 'boolean') muted = initialPrefs.mute;
+        if (initialPrefs && typeof initialPrefs.showStatus === 'boolean') {
+          applyShowStatus(initialPrefs.showStatus);
+        } else {
+          applyShowStatus(true);
+        }
         if (initialPrefs && initialPrefs.animationMode === 'static') animationMode = 'static';
-      } catch (_) { /* use defaults */ }
+      } catch (_) {
+        applyShowStatus(true);
+      }
+    } else {
+      applyShowStatus(true);
     }
 
     try {
@@ -755,6 +1096,11 @@
     if (api.onPrefs) {
       api.onPrefs(async (p) => {
         if (p && typeof p.mute === 'boolean') muted = p.mute;
+        if (p && typeof p.showStatus === 'boolean') {
+          applyShowStatus(p.showStatus);
+          // Re-paint status classes after toggle
+          setStatus(current || 'idle', lastDetail);
+        }
         const nextMode = p && p.animationMode === 'static' ? 'static' : 'fluid';
         if (nextMode !== animationMode) {
           animationMode = nextMode;

@@ -72,7 +72,7 @@ Grok lifecycle event
 | `UserPromptSubmit` | `thinking` | Thoughtful pose                   |
 | `PreToolUse`       | `working`  | Laptop typing (vigorous)          |
 | `Stop`             | `done`     | Celebrate briefly → idle          |
-| `Notification`     | `alert`    | Surprised / shake                 |
+| `Notification`     | `idle`     | Turn-complete ping → idle; approval / error → brief alert then idle |
 | `SessionEnd`       | `sleep`    | Zzz                               |
 | *(60s silence)*    | `sleep`    | Idle timeout                      |
 | *(hover while asleep)* | `idle` | Wakes on mouse over pet       |
@@ -98,7 +98,9 @@ curl -s -X POST 127.0.0.1:7788/show
 
 `GET http://127.0.0.1:7788/health` → JSON `{ "ok": true, "lastState": "...", "pid": ... }`
 
-You should see the status pill under the pet flash to **thinking** / **working** / **done**, and the sprite sheet animation change.
+You should see the liquid-glass **status bubble** under the pet flash to **thinking** / **working** / **done**, and the sprite sheet animation change. With hooks refreshed, tool events also show a short plain-language activity line (e.g. `Running npm test`, `Editing pet.js`) that holds for several seconds so you can read it. Toggle the bubble from the dashboard (**Show status**), the tray / pet menu, or the hover chevron.
+
+**Activity detail** (tool + target) requires an up-to-date `pet-state.js` under `~/.grok/hooks/` — use **Refresh hooks** after upgrading Pet Grok.
 
 **If states never change:** quit every Pet Grok / Electron instance (only one can own port `7788`), then `npm start` again. Zombie processes make hooks update a dead server.
 
@@ -166,6 +168,7 @@ After installing, start (or reload hooks in) a Grok session — press **`r`** in
 | Tray icon | Grok logo / match pet / fixed pet |
 | Size (S / M / L) | 128 / 192 / 256 px window |
 | Mute | Toggle WEEEE + done celebration SFX |
+| Show status | Toggle liquid-glass activity bubble under the pet |
 | Install / Uninstall Grok Hooks | Manage `pet.json` only |
 | Quit | Exit the app |
 
@@ -176,8 +179,8 @@ The **same menu** is available by **right-clicking the pet** on the desktop.
 Open from the tray or pet context menu (**Open Dashboard…**). From there you can:
 
 - See live server / hook / pet state
-- **Manually toggle pet state** (Auto, idle, wake, thinking, working, done, alert, sleep, **WEEEE**) — picking a pose locks it (one-shots hold/loop instead of snapping back); press **Auto** to return to hook-driven behavior
-- Change size, visibility, mute
+- **Manually toggle pet state** (Auto, idle, wake, thinking, working, done, alert, sleep, **WEEEE**) — picking a pose locks it (one-shots hold/loop instead of snapping back); press **Auto** to drop the lock, return to **idle**, and resume hook-driven behavior
+- Change size, visibility, mute, and **Show status** (liquid-glass activity bubble under the pet)
 - Switch between **Fluid animation** (24fps smooth Imagine packs) and **Static sprites** (classic low-fps pose cycles, ~2–10 fps)
 - Install or refresh Grok hooks
 - Choose a **pet** (Hermit Crab, Cloud Pup, Bubble Axolotl, Matcha Frog — drop more under `themes/<id>/` and they appear automatically)
@@ -190,6 +193,7 @@ Other behavior:
 - **Draggable** — grab the pet; position is saved across restarts
 - **Click-through** — transparent pixels pass clicks through; only the pet hit-region captures input
 - **Click to focus Grok** — left-click the pet (without dragging) to focus the terminal tab running the active Grok session (`~/.grok/active_sessions.json`); plays a short **WEEEE** bounce animation
+- **Hover chevron** — mouse over the pet to reveal a small glass arrow; click to show/hide the status bubble (same pref as Dashboard → Show status)
 - **Idle timeout** — after 60s with no events, the pet sleeps; mouse over wakes it
 
 ## Custom themes

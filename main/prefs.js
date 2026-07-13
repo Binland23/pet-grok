@@ -17,6 +17,11 @@ const DEFAULTS = {
   y: null,
   size: 'M',
   mute: false,
+  /**
+   * Show the liquid-glass status bubble under the pet (live agent activity).
+   * Default on so the existing under-pet status remains visible.
+   */
+  showStatus: true,
   themeId: 'race-crab',
   animationMode: 'fluid',
   /** Tray / menu-bar icon: 'grok' | 'match-pet' | theme id */

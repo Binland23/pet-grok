@@ -6,7 +6,13 @@ contextBridge.exposeInMainWorld('petAPI', {
   onState(callback) {
     const handler = (_event, payload) => {
       if (payload && typeof payload === 'object' && payload.state != null) {
-        callback(String(payload.state), { sticky: !!payload.sticky });
+        /** @type {{ sticky?: boolean, detail?: string }} */
+        const opts = {};
+        if (payload.sticky) opts.sticky = true;
+        if (Object.prototype.hasOwnProperty.call(payload, 'detail')) {
+          opts.detail = payload.detail == null ? '' : String(payload.detail);
+        }
+        callback(String(payload.state), opts);
       } else {
         callback(payload, {});
       }
@@ -29,6 +35,13 @@ contextBridge.exposeInMainWorld('petAPI', {
   },
   getPrefs() {
     return ipcRenderer.invoke('pet:get-prefs');
+  },
+  /**
+   * Toggle or set the under-pet status bubble (persists like dashboard Show status).
+   * @param {boolean} [show] if omitted, flips current value
+   */
+  setShowStatus(show) {
+    return ipcRenderer.invoke('pet:set-show-status', show);
   },
   /**
    * @param {'fluid' | 'static'} [mode]

@@ -84,13 +84,30 @@ function loadTheme(themeId) {
   };
 }
 
-/** Active agent states must NEVER auto-sleep (long model responses have no hooks). */
-const ACTIVE_AGENT_STATES = new Set(['thinking', 'working', 'alert', 'wake']);
+/**
+ * Active agent states must NEVER auto-sleep (long model responses have no hooks).
+ * Note: alert is intentionally excluded — it is a short attention flash that
+ * settles to idle (see ALERT_SETTLE_MS). Including it blocked sleep after
+ * Grok's post-turn Notification hooks.
+ */
+const ACTIVE_AGENT_STATES = new Set(['thinking', 'working', 'wake']);
+
+/** Brief alert flash, then idle so quiet-timeout → sleep can run. */
+const ALERT_SETTLE_MS = 4000;
+/** @type {NodeJS.Timeout | null} */
+let alertSettleTimer = null;
 
 function clearIdleTimer() {
   if (idleTimer) {
     clearTimeout(idleTimer);
     idleTimer = null;
+  }
+}
+
+function clearAlertSettleTimer() {
+  if (alertSettleTimer) {
+    clearTimeout(alertSettleTimer);
+    alertSettleTimer = null;
   }
 }
 
@@ -118,10 +135,13 @@ function normalizePetState(state) {
 
 /**
  * Resume hook-driven behavior after a manual lock.
+ * Always baseline to idle — keeping thinking/working/alert left the pet stuck
+ * on a forced pose after Auto when no live hooks were firing.
  */
 function setStateControlAuto() {
   stateControlMode = 'auto';
-  // Drop sticky hold on one-shot poses so normal transitions resume
+  clearAlertSettleTimer();
+  // Tell the renderer to drop stickyHold first (ordered with the idle push).
   if (mainWindow && !mainWindow.isDestroyed()) {
     try {
       mainWindow.webContents.send('pet:state-control', { mode: 'auto' });
@@ -129,21 +149,19 @@ function setStateControlAuto() {
       /* ignore */
     }
   }
-  // Re-arm idle policy from whatever pose the pet is currently in
-  if (ACTIVE_AGENT_STATES.has(lastKnownState)) {
-    clearIdleTimer();
-  } else if (lastKnownState === 'idle') {
-    resetIdleTimer();
-  } else if (lastKnownState === 'sleep' || lastKnownState === 'done' || lastKnownState === 'click') {
-    clearIdleTimer();
-  } else {
-    clearIdleTimer();
+  // Sync HTTP server + overlay + idle timer (pushState('idle') re-arms quiet timeout)
+  if (stateServer && typeof stateServer.setState === 'function') {
+    stateServer.setState('idle', { emit: false, detail: '' });
   }
-  broadcastDashboardSnapshot();
+  pushState('idle', { detail: '' });
 }
 
 /** Last states pushed to renderer (for health / debugging). */
 const pushHistory = [];
+/** Extra window height reserved for the liquid-glass status bubble under the pet. */
+const STATUS_EXTRA_H = 48;
+/** Most recent activity detail from hooks (shown in status bubble / dashboard). */
+let lastKnownDetail = '';
 
 function pushStateLogPath() {
   try {
@@ -190,9 +208,10 @@ function forceShowPet(reason) {
 /**
  * Push a pet state to the overlay.
  * @param {string} petState
- * @param {{ manual?: boolean, sticky?: boolean }} [opts]
+ * @param {{ manual?: boolean, sticky?: boolean, detail?: string }} [opts]
  *   manual: dashboard force (allowed while stateControlMode is manual)
  *   sticky: hold one-shot poses (wake/done/click) instead of auto-returning to idle
+ *   detail: short activity text for the status bubble (tool + target, etc.)
  */
 function pushState(petState, opts = {}) {
   petState = normalizePetState(petState);
@@ -203,18 +222,35 @@ function pushState(petState, opts = {}) {
   }
 
   const sticky = stateControlMode === 'manual' || !!opts.sticky;
+  const detail =
+    opts.detail != null && String(opts.detail).trim()
+      ? String(opts.detail).trim()
+      : '';
   const at = Date.now();
   lastKnownState = petState;
+  // Keep prior detail on state-only updates only for continuous agent poses when
+  // explicitly provided empty string clears it (hooks always pass through).
+  if (Object.prototype.hasOwnProperty.call(opts, 'detail')) {
+    lastKnownDetail = detail;
+  } else if (!ACTIVE_AGENT_STATES.has(petState) && petState !== 'done') {
+    lastKnownDetail = '';
+  }
   const hasWindow = !!(mainWindow && !mainWindow.isDestroyed());
-  pushHistory.push({ state: petState, at, window: hasWindow, sticky });
+  const histEntry = { state: petState, at, window: hasWindow, sticky };
+  if (lastKnownDetail) histEntry.detail = lastKnownDetail;
+  pushHistory.push(histEntry);
   if (pushHistory.length > 40) pushHistory.shift();
-  const line = `[pushState] ${petState} sticky=${sticky} manual=${!!opts.manual} window=${hasWindow} at=${at}`;
+  const line = `[pushState] ${petState} sticky=${sticky} manual=${!!opts.manual} detail=${lastKnownDetail || '-'} window=${hasWindow} at=${at}`;
   console.log(line);
   appendPushLog(line);
   broadcastDashboardSnapshot();
 
   if (hasWindow) {
-    const payload = sticky ? { state: petState, sticky: true } : petState;
+    /** @type {{ state: string, sticky?: boolean, detail?: string }} */
+    const payload = { state: petState };
+    if (sticky) payload.sticky = true;
+    if (lastKnownDetail) payload.detail = lastKnownDetail;
+    else if (Object.prototype.hasOwnProperty.call(opts, 'detail')) payload.detail = '';
     const send = () => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('pet:state', payload);
@@ -236,22 +272,37 @@ function pushState(petState, opts = {}) {
   }
 
   // Idle timeout policy (disabled entirely while manual lock is on):
-  // - thinking/working/alert: agent mid-turn → never auto-sleep
+  // - thinking/working/wake: agent mid-turn → never auto-sleep
   // - idle: start 60s quiet timer
-  // - done/wake: brief; timer starts when we reach idle
+  // - alert: brief flash, then auto-settle to idle (starts quiet timer)
+  // - done/click: brief; quiet timer starts when we reach idle
   // - sleep: clear timer
   if (stateControlMode === 'manual') {
     clearIdleTimer();
+    clearAlertSettleTimer();
     return;
   }
-  if (ACTIVE_AGENT_STATES.has(petState)) {
+  if (petState === 'alert' && !sticky) {
     clearIdleTimer();
-  } else if (petState === 'idle') {
-    resetIdleTimer();
-  } else if (petState === 'sleep') {
-    clearIdleTimer();
-  } else if (petState === 'done' || petState === 'click') {
-    clearIdleTimer();
+    clearAlertSettleTimer();
+    alertSettleTimer = setTimeout(() => {
+      alertSettleTimer = null;
+      // Only settle if we're still showing alert (no newer hook)
+      if (lastKnownState === 'alert' && stateControlMode === 'auto') {
+        pushState('idle', { detail: '' });
+      }
+    }, ALERT_SETTLE_MS);
+  } else {
+    clearAlertSettleTimer();
+    if (ACTIVE_AGENT_STATES.has(petState)) {
+      clearIdleTimer();
+    } else if (petState === 'idle') {
+      resetIdleTimer();
+    } else if (petState === 'sleep') {
+      clearIdleTimer();
+    } else if (petState === 'done' || petState === 'click') {
+      clearIdleTimer();
+    }
   }
 }
 
@@ -259,9 +310,23 @@ function windowSize() {
   return prefs.sizePx(getState().size);
 }
 
+/**
+ * Pet overlay dimensions. Extra height when the status bubble is shown so
+ * multi-line glass text sits under the sprite without covering feet.
+ * @returns {{ width: number, height: number }}
+ */
+function windowDims() {
+  const width = windowSize();
+  const showStatus = getState().showStatus !== false;
+  return {
+    width,
+    height: width + (showStatus ? STATUS_EXTRA_H : 0),
+  };
+}
+
 function createWindow() {
   const s = getState();
-  const size = windowSize();
+  const { width, height } = windowDims();
   const display = screen.getPrimaryDisplay();
   const { width: sw, height: sh } = display.workAreaSize;
   const { x: ox, y: oy } = display.workArea;
@@ -269,13 +334,13 @@ function createWindow() {
   let x = s.x;
   let y = s.y;
   if (x == null || y == null) {
-    x = ox + sw - size - 24;
-    y = oy + sh - size - 48;
+    x = ox + sw - width - 24;
+    y = oy + sh - height - 48;
   }
 
   mainWindow = new BrowserWindow({
-    width: size,
-    height: size,
+    width,
+    height,
     x,
     y,
     transparent: true,
@@ -517,6 +582,14 @@ function buildAppMenu() {
         applySettingsPatch({ mute: item.checked });
       },
     },
+    {
+      label: 'Show status',
+      type: 'checkbox',
+      checked: s.showStatus !== false,
+      click: (item) => {
+        applySettingsPatch({ showStatus: item.checked });
+      },
+    },
     { type: 'separator' },
     {
       label: installed ? 'Uninstall Grok Hooks' : 'Install Grok Hooks',
@@ -589,6 +662,7 @@ function buildDashboardSnapshot() {
   return {
     size: s.size || 'M',
     mute: !!s.mute,
+    showStatus: s.showStatus !== false,
     animationMode: prefs.normalizeAnimationMode(s.animationMode),
     visible: s.visible !== false,
     themeId: s.themeId || 'race-crab',
@@ -600,6 +674,7 @@ function buildDashboardSnapshot() {
     hooksPath: hooks.getHookFilePath(),
     serverOk,
     lastState: lastKnownState || lastState,
+    lastDetail: lastKnownDetail || '',
     stateControlMode,
     history: pushHistory.slice(-12),
     version: app.getVersion() || '1.0.0',
@@ -625,6 +700,7 @@ function applySettingsPatch(patch) {
     s.size = String(patch.size);
   }
   if (typeof patch.mute === 'boolean') s.mute = patch.mute;
+  if (typeof patch.showStatus === 'boolean') s.showStatus = patch.showStatus;
   if (patch.animationMode != null) {
     s.animationMode = prefs.normalizeAnimationMode(patch.animationMode);
   }
@@ -639,10 +715,10 @@ function applySettingsPatch(patch) {
   prefs.save(s);
 
   if (mainWindow && !mainWindow.isDestroyed()) {
-    if (patch.size != null) {
-      const size = prefs.sizePx(s.size);
+    if (patch.size != null || typeof patch.showStatus === 'boolean') {
+      const dims = windowDims();
       const [x, y] = mainWindow.getPosition();
-      mainWindow.setBounds({ x, y, width: size, height: size });
+      mainWindow.setBounds({ x, y, width: dims.width, height: dims.height });
     }
     if (typeof patch.visible === 'boolean') {
       if (s.visible === false) mainWindow.hide();
@@ -650,6 +726,7 @@ function applySettingsPatch(patch) {
     }
     mainWindow.webContents.send('pet:prefs', {
       mute: s.mute,
+      showStatus: s.showStatus !== false,
       size: s.size,
       themeId: s.themeId,
       animationMode: prefs.normalizeAnimationMode(s.animationMode),
@@ -768,11 +845,25 @@ function registerIpc() {
     const s = getState();
     return {
       mute: s.mute,
+      showStatus: s.showStatus !== false,
       size: s.size,
       themeId: s.themeId,
       animationMode: prefs.normalizeAnimationMode(s.animationMode),
       visible: s.visible !== false,
     };
+  });
+  /**
+   * Hover-chevron / quick toggle for the status bubble.
+   * @param {Electron.IpcMainInvokeEvent} e
+   * @param {unknown} show  boolean to set, or null/undefined to flip
+   */
+  ipcMain.handle('pet:set-show-status', (e, show) => {
+    if (!isSenderWindow(e, mainWindow)) return null;
+    const s = getState();
+    const next =
+      typeof show === 'boolean' ? show : s.showStatus === false;
+    applySettingsPatch({ showStatus: next });
+    return { showStatus: getState().showStatus !== false };
   });
   ipcMain.handle('pet:get-push-history', (e) => {
     if (!isSenderWindow(e, mainWindow)) return [];
@@ -920,28 +1011,28 @@ function registerIpc() {
     mainWindow._dragOffset = { x: cursor.x - wx, y: cursor.y - wy };
     mainWindow.setIgnoreMouseEvents(false);
     // Snap size back to the configured preset before moving
-    const size = windowSize();
-    mainWindow.setBounds({ x: wx, y: wy, width: size, height: size });
+    const dims = windowDims();
+    mainWindow.setBounds({ x: wx, y: wy, width: dims.width, height: dims.height });
   });
 
   ipcMain.on('pet:drag-move', (e) => {
     if (!isSenderWindow(e, mainWindow)) return;
     if (!mainWindow || mainWindow.isDestroyed() || !mainWindow._dragOffset) return;
     const cursor = screen.getCursorScreenPoint();
-    const size = windowSize();
+    const dims = windowDims();
     const nx = Math.round(cursor.x - mainWindow._dragOffset.x);
     const ny = Math.round(cursor.y - mainWindow._dragOffset.y);
-    mainWindow.setBounds({ x: nx, y: ny, width: size, height: size });
+    mainWindow.setBounds({ x: nx, y: ny, width: dims.width, height: dims.height });
   });
 
   ipcMain.on('pet:drag-end', (e) => {
     if (!isSenderWindow(e, mainWindow)) return;
     if (!mainWindow || mainWindow.isDestroyed()) return;
     mainWindow._dragOffset = null;
-    const size = windowSize();
+    const dims = windowDims();
     const [x, y] = mainWindow.getPosition();
     // Final clamp so any DPI drift is discarded
-    mainWindow.setBounds({ x, y, width: size, height: size });
+    mainWindow.setBounds({ x, y, width: dims.width, height: dims.height });
     const s = getState();
     s.x = x;
     s.y = y;
@@ -997,9 +1088,10 @@ app.whenReady().then(async () => {
   // Bind state server FIRST so hooks have a live target before window paints
   try {
     stateServer = await startStateServer(
-      (petState) => {
-        console.log('[state]', petState);
-        pushState(petState);
+      (petState, meta) => {
+        const detail = meta && meta.detail ? String(meta.detail) : '';
+        console.log('[state]', petState, detail || '');
+        pushState(petState, { detail });
       },
       {
         // POST /show — unhide if already running (used by tests / manual curl)
