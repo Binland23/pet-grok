@@ -38,7 +38,11 @@ const EVENT_STATE_MAP = {
   PostToolUse: 'working',
   PostToolUseFailure: 'alert',
   Stop: 'done',
-  Notification: 'alert',
+  /**
+   * Notification is usually turn_complete (not an emergency). Install as idle;
+   * pet-state.js still upgrades approval_required / agent_error → alert from stdin.
+   */
+  Notification: 'idle',
   SessionEnd: 'sleep',
 };
 

@@ -44,16 +44,27 @@
     const serverOk = !!snap.serverOk;
     const last = snap.lastState || '—';
     const displayState = last === 'click' ? 'WEEEE' : last;
+    const detail = (snap.lastDetail && String(snap.lastDetail).trim()) || '';
     const hooksOk = !!snap.hooksInstalled;
     const visible = snap.visible !== false;
+    const showStatus = snap.showStatus !== false;
     const manual = (snap.stateControlMode || 'auto') === 'manual';
-    row.innerHTML = [
+    const pills = [
       `<span class="pill ${serverOk ? 'ok' : 'bad'}"><span class="dot"></span> Server ${serverOk ? 'online' : 'offline'}</span>`,
       `<span class="pill"><span class="dot"></span> State <span class="mono">${escapeHtml(displayState)}</span></span>`,
+    ];
+    if (detail) {
+      pills.push(
+        `<span class="pill"><span class="dot"></span> Activity <span class="mono">${escapeHtml(detail)}</span></span>`
+      );
+    }
+    pills.push(
       `<span class="pill ${manual ? 'warn' : 'ok'}"><span class="dot"></span> ${manual ? 'Manual lock' : 'Auto'}</span>`,
       `<span class="pill ${hooksOk ? 'ok' : 'warn'}"><span class="dot"></span> Hooks ${hooksOk ? 'installed' : 'missing'}</span>`,
       `<span class="pill ${visible ? 'ok' : 'warn'}"><span class="dot"></span> Pet ${visible ? 'shown' : 'hidden'}</span>`,
-    ].join('');
+      `<span class="pill ${showStatus ? 'ok' : 'warn'}"><span class="dot"></span> Status ${showStatus ? 'on' : 'off'}</span>`
+    );
+    row.innerHTML = pills.join('');
   }
 
   function stateButtonActive(btnDef, mode, current) {
@@ -240,6 +251,8 @@
     });
     document.getElementById('toggleVisible').checked = snap.visible !== false;
     document.getElementById('toggleMute').checked = !!snap.mute;
+    const showStatusEl = document.getElementById('toggleShowStatus');
+    if (showStatusEl) showStatusEl.checked = snap.showStatus !== false;
     document.getElementById('hooksSub').textContent = snap.hooksInstalled
       ? (snap.hooksPath || 'Installed')
       : 'Not installed — Grok TUI won’t drive the pet';
@@ -355,6 +368,15 @@
   document.getElementById('toggleMute').addEventListener('change', (e) => {
     patch({ mute: e.target.checked }, e.target.checked ? 'Muted' : 'Unmuted');
   });
+  const toggleShowStatus = document.getElementById('toggleShowStatus');
+  if (toggleShowStatus) {
+    toggleShowStatus.addEventListener('change', (e) => {
+      patch(
+        { showStatus: e.target.checked },
+        e.target.checked ? 'Status bubble shown' : 'Status bubble hidden'
+      );
+    });
+  }
 
   document.getElementById('btnHooks').addEventListener('click', async () => {
     if (snap && snap.hooksInstalled) {

@@ -15,7 +15,10 @@ const { spawn } = require('node:child_process');
 const hooks = require('../main/hooks');
 const {
   parseStateBody,
+  parseStatePayload,
   mapHookEventToState,
+  stateFromNotification,
+  summarizeHookDetail,
   startStateServer,
 } = require('../main/state-server');
 
@@ -68,13 +71,16 @@ function get(port, urlPath) {
   });
 }
 
-function runHookScript(state, scriptPath) {
+function runHookScript(state, scriptPath, stdinObj) {
   return new Promise((resolve) => {
     const node = process.execPath;
     const c = spawn(node, [scriptPath, state], {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
-    c.stdin.write(JSON.stringify({ hookEventName: 'user_prompt_submit', sessionId: 'test' }));
+    const payload =
+      stdinObj ||
+      { hookEventName: 'user_prompt_submit', sessionId: 'test' };
+    c.stdin.write(JSON.stringify(payload));
     setTimeout(() => {
       try {
         c.stdin.end();
@@ -241,6 +247,94 @@ describe('parseStateBody (real shipped parser)', () => {
     assert.equal(mapHookEventToState('UserPromptSubmit'), 'thinking');
     assert.equal(mapHookEventToState('PreToolUse'), 'working');
     assert.equal(mapHookEventToState('Stop'), 'done');
+    // Bare Notification is idle — turn_complete pings must not stick on alert
+    assert.equal(mapHookEventToState('Notification'), 'idle');
+    assert.equal(mapHookEventToState('notification'), 'idle');
+  });
+
+  it('stateFromNotification maps turn_complete to idle and approval to alert', () => {
+    assert.equal(stateFromNotification({ notificationType: 'turn_complete' }), 'idle');
+    assert.equal(stateFromNotification({ notification_type: 'task_complete' }), 'idle');
+    assert.equal(stateFromNotification({ type: 'session_ready' }), 'idle');
+    assert.equal(stateFromNotification({ notificationType: 'approval_required' }), 'alert');
+    assert.equal(stateFromNotification({ type: 'agent_error' }), 'alert');
+    assert.equal(stateFromNotification({ message: 'Turn complete' }), 'idle');
+    assert.equal(stateFromNotification({ message: 'Approval required' }), 'alert');
+    // Unknown / empty → idle (safe default; was wrongly alert)
+    assert.equal(stateFromNotification({}), 'idle');
+    assert.equal(stateFromNotification(null), 'idle');
+  });
+
+  it('parseStatePayload remaps Notification envelopes away from hardcoded alert', () => {
+    const p = parseStatePayload(
+      JSON.stringify({
+        state: 'alert',
+        hookEventName: 'notification',
+        notificationType: 'turn_complete',
+      })
+    );
+    assert.ok(p);
+    assert.equal(p.state, 'idle');
+
+    const approval = parseStatePayload(
+      JSON.stringify({
+        state: 'alert',
+        hookEventName: 'notification',
+        type: 'approval_required',
+      })
+    );
+    assert.ok(approval);
+    assert.equal(approval.state, 'alert');
+  });
+
+  it('parseStatePayload accepts JSON with state + detail', () => {
+    const p = parseStatePayload(
+      JSON.stringify({ state: 'working', detail: 'Running npm test' })
+    );
+    assert.ok(p);
+    assert.equal(p.state, 'working');
+    assert.match(p.detail, /Running/);
+    assert.match(p.detail, /npm test/);
+  });
+
+  it('parseStatePayload summarizes tool envelopes as plain sentences', () => {
+    const p = parseStatePayload(
+      JSON.stringify({
+        hookEventName: 'pre_tool_use',
+        toolName: 'run_terminal_command',
+        toolInput: { command: 'npm test' },
+      })
+    );
+    assert.ok(p);
+    assert.equal(p.state, 'working');
+    assert.match(p.detail, /^Running /);
+    assert.match(p.detail, /npm test/);
+  });
+
+  it('summarizeHookDetail uses readable activity phrases', () => {
+    assert.equal(
+      summarizeHookDetail({
+        toolName: 'read_file',
+        toolInput: { target_file: '/Users/me/project/src/index.js' },
+      }),
+      'Reading src/index.js'
+    );
+    assert.equal(
+      summarizeHookDetail({
+        toolName: 'search_replace',
+        toolInput: { target_file: 'renderer/pet.js' },
+      }),
+      'Editing renderer/pet.js'
+    );
+    assert.equal(
+      summarizeHookDetail({
+        toolName: 'run_terminal_command',
+        toolInput: { command: 'npm test' },
+      }),
+      'Running npm test'
+    );
+    assert.equal(summarizeHookDetail({ detail: '  custom   line  ' }), 'custom line');
+    assert.equal(summarizeHookDetail(null), '');
   });
 });
 
@@ -275,6 +369,22 @@ describe('state server HTTP (real startStateServer)', () => {
     }
     assert.deepEqual(received, ['thinking', 'working', 'done']);
     assert.equal(server.getLastState(), 'done');
+  });
+
+  it('POST JSON {state, detail} stores detail for the status bubble', async () => {
+    received.length = 0;
+    const r = await post(
+      port,
+      '/state',
+      JSON.stringify({ state: 'working', detail: 'Running npm test' }),
+      'application/json'
+    );
+    assert.equal(r.status, 200);
+    assert.equal(r.body, 'working');
+    assert.equal(server.getLastState(), 'working');
+    assert.equal(server.getLastDetail(), 'Running npm test');
+    const health = JSON.parse((await get(port, '/health')).body);
+    assert.equal(health.lastDetail, 'Running npm test');
   });
 
   it('POST /show invokes onShow without changing pet state', async () => {
@@ -475,6 +585,70 @@ describe('pet-state-hook.js (real Grok hook script)', () => {
       assert.equal(r.code, 0, `failed on ${s}: ${r.err}`);
     }
     assert.equal(server.getLastState(), 'done');
+  });
+
+  it('posts tool detail from PreToolUse stdin envelope', async () => {
+    if (!server) {
+      // Live pet owns 7788 — unit coverage lives in parseStatePayload tests
+      return;
+    }
+    received.length = 0;
+    const r = await runHookScript('working', scriptCopy, {
+      hookEventName: 'pre_tool_use',
+      toolName: 'run_terminal_command',
+      toolInput: { command: 'npm test' },
+    });
+    assert.equal(r.code, 0, `hook script failed: ${r.err}`);
+    assert.equal(server.getLastState(), 'working');
+    assert.match(server.getLastDetail() || '', /Running/);
+    assert.match(server.getLastDetail() || '', /npm test/);
+  });
+
+  it('remaps Notification argv alert + turn_complete to idle (not stuck alert)', async () => {
+    // Always exercise the script: either our test server or the live pet on 7788
+    const before = server
+      ? server.getLastState()
+      : JSON.parse((await get(7788, '/health')).body).lastState;
+
+    // Simulate older pet.json installs that hardcode argv "alert" for Notification
+    const r = await new Promise((resolve) => {
+      const c = spawn(process.execPath, [scriptCopy, 'alert'], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...process.env, GROK_HOOK_EVENT: 'notification' },
+      });
+      c.stdin.write(
+        JSON.stringify({
+          hookEventName: 'notification',
+          notificationType: 'turn_complete',
+          message: 'Turn complete',
+        })
+      );
+      setTimeout(() => {
+        try {
+          c.stdin.end();
+        } catch {
+          /* ignore */
+        }
+      }, 20);
+      let err = '';
+      c.stderr.on('data', (d) => (err += d));
+      c.on('close', (code) => resolve({ code, err }));
+      c.on('error', (e) => resolve({ code: -1, err: e.message }));
+    });
+    assert.equal(r.code, 0, `hook script failed: ${r.err}`);
+
+    // Poll briefly for async POST
+    let last = before;
+    for (let i = 0; i < 20; i++) {
+      await new Promise((r) => setTimeout(r, 50));
+      if (server) {
+        last = server.getLastState();
+      } else {
+        last = JSON.parse((await get(7788, '/health')).body).lastState;
+      }
+      if (last === 'idle') break;
+    }
+    assert.equal(last, 'idle', `expected idle after turn_complete notification, got ${last}`);
   });
 });
 

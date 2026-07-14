@@ -564,7 +564,7 @@
       <h2>Pet state</h2>
       <div class="state-grid" id="stateGrid" role="group" aria-label="Pet state control"></div>
       <p class="hint" id="stateHint">
-        <strong>Auto</strong> lets Grok hooks drive the pet.
+        <strong>Auto</strong> lets Grok hooks drive the pet (returns to idle, then hooks take over).
         Pick any pose to lock it (loops in the current Fluid / Static style) until you return to Auto.
       </p>
     </section>
@@ -615,6 +615,17 @@
           </div>
           <label class="switch">
             <input type="checkbox" id="toggleMute" />
+            <span></span>
+          </label>
+        </div>
+
+        <div class="toggle-row">
+          <div class="meta">
+            <div class="title">Show status</div>
+            <div class="sub">Glass bubble under the pet with live agent activity</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="toggleShowStatus" />
             <span></span>
           </label>
         </div>

@@ -14,6 +14,10 @@ describe('animation mode preference', () => {
     assert.equal(prefs.DEFAULTS.hooksUserDisabled, false);
   });
 
+  it('defaults showStatus to true (glass bubble under pet)', () => {
+    assert.equal(prefs.DEFAULTS.showStatus, true);
+  });
+
   it('accepts the two supported modes', () => {
     assert.equal(prefs.normalizeAnimationMode('fluid'), 'fluid');
     assert.equal(prefs.normalizeAnimationMode('static'), 'static');
