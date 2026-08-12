@@ -18,11 +18,23 @@ const hooks = require('./hooks');
 const { startStateServer, ALLOWED_STATES, STATE_ALIASES } = require('./state-server');
 const platform = require('./platform');
 const themes = require('./themes');
-const { focusActiveGrokTerminal } = require('./focus-terminal');
+const {
+  focusActiveGrokTerminal,
+  readActiveSessions,
+  processExists,
+} = require('./focus-terminal');
 const { createBoundedLogger } = require('./bounded-log');
 const { debounce } = require('./debounce');
+const { STATUS_EXTRA_H, windowHeightForPet } = require('../renderer/status-chrome');
 
 const IDLE_TIMEOUT_MS = 60_000;
+/** How often to check whether any Grok TUI process is still alive. */
+const SESSION_WATCH_MS = 4000;
+/**
+ * Require this many consecutive empty polls after having seen a live session
+ * before auto-hiding (covers force-quit Terminal without SessionEnd).
+ */
+const SESSION_GONE_POLLS = 2;
 
 /** @type {BrowserWindow | null} */
 let mainWindow = null;
@@ -34,6 +46,16 @@ let tray = null;
 let stateServer = null;
 /** @type {NodeJS.Timeout | null} */
 let idleTimer = null;
+/** @type {NodeJS.Timeout | null} */
+let zOrderTimer = null;
+/** @type {NodeJS.Timeout | null} */
+let sessionWatchTimer = null;
+/** True after we observe at least one living Grok session PID. */
+let hadLivingGrokSession = false;
+/** Consecutive polls with no living Grok session (after hadLivingGrokSession). */
+let sessionGoneStreak = 0;
+/** How often to re-pin always-on-top (browsers like Edge can steal z-order). */
+const Z_ORDER_REASSERT_MS = 2500;
 let suppressMovedSave = false;
 /** @type {ReturnType<typeof prefs.load> | null} */
 let state = null;
@@ -55,6 +77,7 @@ if (!gotLock) {
     openDashboard();
     if (mainWindow && getState().visible !== false) {
       if (!mainWindow.isVisible()) mainWindow.show();
+      reassertOverlayZOrder();
     }
   });
 }
@@ -161,8 +184,6 @@ function setStateControlAuto() {
 
 /** Last states pushed to renderer (for health / debugging). */
 const pushHistory = [];
-/** Extra window height reserved for the liquid-glass status bubble under the pet. */
-const STATUS_EXTRA_H = 48;
 /** Most recent activity detail from hooks (shown in status bubble / dashboard). */
 let lastKnownDetail = '';
 
@@ -193,6 +214,30 @@ function appendPushLog(line) {
 }
 
 /**
+ * Keep the transparent pet above other apps (notably Edge/Chrome).
+ * Safe to call often; no focus steal.
+ */
+function reassertOverlayZOrder() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (getState().visible === false) return;
+  if (!mainWindow.isVisible()) return;
+  platform.applyOverlayZOrder(mainWindow);
+}
+
+function startZOrderKeepAlive() {
+  if (zOrderTimer) return;
+  zOrderTimer = setInterval(reassertOverlayZOrder, Z_ORDER_REASSERT_MS);
+  // Unref so this timer alone cannot keep the process alive at quit.
+  if (typeof zOrderTimer.unref === 'function') zOrderTimer.unref();
+}
+
+function stopZOrderKeepAlive() {
+  if (!zOrderTimer) return;
+  clearInterval(zOrderTimer);
+  zOrderTimer = null;
+}
+
+/**
  * Surface the pet overlay if this process is running.
  * Used on Grok SessionStart (wake): even if the user hid the pet earlier,
  * starting a Grok session brings it back. Does not launch a new process.
@@ -210,12 +255,94 @@ function forceShowPet(reason) {
     if (!mainWindow.isVisible()) {
       mainWindow.showInactive();
     }
+    reassertOverlayZOrder();
+    startZOrderKeepAlive();
   }
   appendPushLog(`[forceShow] ${reason || 'show'} visible=true prefsChanged=${prefsChanged}`);
   if (prefsChanged) {
     rebuildTray();
     broadcastDashboardSnapshot();
   }
+}
+
+/**
+ * Hide the pet overlay (tray process stays alive).
+ * Used on Grok SessionEnd / last session gone so the desktop is clear when
+ * the terminal session is over. SessionStart / POST /show bring it back.
+ * @param {string} [reason]
+ */
+function forceHidePet(reason) {
+  const s = getState();
+  let prefsChanged = false;
+  if (s.visible !== false) {
+    s.visible = false;
+    prefs.save(s);
+    prefsChanged = true;
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isVisible()) {
+      mainWindow.hide();
+    }
+    stopZOrderKeepAlive();
+  }
+  // Reset session-watch so we only re-hide after the next living session.
+  hadLivingGrokSession = false;
+  sessionGoneStreak = 0;
+  appendPushLog(`[forceHide] ${reason || 'hide'} visible=false prefsChanged=${prefsChanged}`);
+  if (prefsChanged) {
+    rebuildTray();
+    broadcastDashboardSnapshot();
+  }
+}
+
+/**
+ * @returns {boolean} true if any entry in active_sessions.json has a living PID
+ */
+function hasLivingGrokSession() {
+  try {
+    const sessions = readActiveSessions();
+    for (const s of sessions) {
+      if (s.pid > 0 && processExists(s.pid)) return true;
+    }
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
+/**
+ * When a Grok TUI session was alive and then all session PIDs die (e.g. user
+ * quit Terminal without a clean SessionEnd), hide the pet automatically.
+ * Idle timeout sleep alone does not hide — only "no more sessions".
+ */
+function tickSessionWatch() {
+  if (stateControlMode === 'manual') return;
+  if (getState().visible === false) {
+    // Stay dormant until SessionStart /show brings us back and a session lives.
+    return;
+  }
+  const living = hasLivingGrokSession();
+  if (living) {
+    hadLivingGrokSession = true;
+    sessionGoneStreak = 0;
+    return;
+  }
+  if (!hadLivingGrokSession) return;
+  sessionGoneStreak += 1;
+  if (sessionGoneStreak < SESSION_GONE_POLLS) return;
+  forceHidePet('session-gone');
+}
+
+function startSessionWatch() {
+  if (sessionWatchTimer) return;
+  sessionWatchTimer = setInterval(tickSessionWatch, SESSION_WATCH_MS);
+  if (typeof sessionWatchTimer.unref === 'function') sessionWatchTimer.unref();
+}
+
+function stopSessionWatch() {
+  if (!sessionWatchTimer) return;
+  clearInterval(sessionWatchTimer);
+  sessionWatchTimer = null;
 }
 
 /**
@@ -333,7 +460,7 @@ function windowDims() {
   const showStatus = getState().showStatus !== false;
   return {
     width,
-    height: width + (showStatus ? STATUS_EXTRA_H : 0),
+    height: windowHeightForPet(width, showStatus),
   };
 }
 
@@ -377,8 +504,8 @@ function createWindow() {
     },
   });
 
-  platform.setAlwaysOnTopSafe(mainWindow);
-  platform.setVisibleOnAllWorkspacesSafe(mainWindow);
+  // VOAW then AOT (order matters on macOS) — see platform.applyOverlayZOrder
+  platform.applyOverlayZOrder(mainWindow);
 
   mainWindow.setIgnoreMouseEvents(true, { forward: true });
 
@@ -387,7 +514,21 @@ function createWindow() {
   mainWindow.once('ready-to-show', () => {
     if (getState().visible !== false) {
       mainWindow.showInactive();
+      reassertOverlayZOrder();
+      startZOrderKeepAlive();
     }
+  });
+
+  // Browsers can re-stack above us when they activate; re-pin without focusing.
+  mainWindow.on('show', () => {
+    reassertOverlayZOrder();
+    startZOrderKeepAlive();
+  });
+  mainWindow.on('hide', () => {
+    stopZOrderKeepAlive();
+  });
+  mainWindow.on('blur', () => {
+    setTimeout(reassertOverlayZOrder, 50);
   });
 
   mainWindow.on('moved', () => {
@@ -398,6 +539,7 @@ function createWindow() {
   mainWindow.on('closed', () => {
     saveMovedPosition.cancel();
     suppressMovedSave = false;
+    stopZOrderKeepAlive();
     mainWindow = null;
   });
 }
@@ -733,8 +875,14 @@ function applySettingsPatch(patch) {
       mainWindow.setBounds({ x, y, width: dims.width, height: dims.height });
     }
     if (typeof patch.visible === 'boolean') {
-      if (s.visible === false) mainWindow.hide();
-      else mainWindow.showInactive();
+      if (s.visible === false) {
+        mainWindow.hide();
+        stopZOrderKeepAlive();
+      } else {
+        mainWindow.showInactive();
+        reassertOverlayZOrder();
+        startZOrderKeepAlive();
+      }
     }
     mainWindow.webContents.send('pet:prefs', {
       mute: s.mute,
@@ -1113,6 +1261,8 @@ app.whenReady().then(async () => {
       {
         // POST /show — unhide if already running (used by tests / manual curl)
         onShow: () => forceShowPet('http-show'),
+        // POST /hide — SessionEnd / terminal quit (pet stays in tray)
+        onHide: () => forceHidePet('http-hide'),
       }
     );
   } catch (err) {
@@ -1143,6 +1293,9 @@ app.whenReady().then(async () => {
   ensureHooksOnLaunch();
   rebuildTray();
 
+  // Hide when Grok sessions die (SessionEnd hook + force-quit Terminal fallback)
+  startSessionWatch();
+
   // Start idle (not mid-agent); only idle uses quiet timeout
   setTimeout(() => pushState('idle'), 400);
 });
@@ -1155,6 +1308,8 @@ app.on('window-all-closed', () => {
 app.on('before-quit', async () => {
   app.isQuitting = true;
   if (idleTimer) clearTimeout(idleTimer);
+  stopZOrderKeepAlive();
+  stopSessionWatch();
   if (stateServer) {
     try {
       await stateServer.close();

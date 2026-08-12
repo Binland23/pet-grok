@@ -4,6 +4,8 @@ const http = require('http');
 
 const HOST = '127.0.0.1';
 const PORT = 7788;
+/** Service identity for multi-app launchers (must match ~/.grok/local-app-ports.json). */
+const SERVICE_ID = 'pet-grok';
 
 const ALLOWED_STATES = new Set([
   'wake',
@@ -519,12 +521,13 @@ function stateFromNotification(envelope, opts = {}) {
 /**
  * Tiny localhost state server.
  * @param {(state: string, meta?: { detail?: string }) => void} onState
- * @param {{ host?: string, port?: number, onShow?: () => void }} [opts]
+ * @param {{ host?: string, port?: number, onShow?: () => void, onHide?: () => void }} [opts]
  */
 function startStateServer(onState, opts = {}) {
   const host = opts.host || HOST;
   const port = opts.port != null ? opts.port : PORT;
   const onShow = typeof opts.onShow === 'function' ? opts.onShow : null;
+  const onHide = typeof opts.onHide === 'function' ? opts.onHide : null;
 
   let lastState = 'idle';
   let lastDetail = '';
@@ -574,11 +577,15 @@ function startStateServer(onState, opts = {}) {
 
     const url = req.url || '/';
 
-    if (req.method === 'GET' && (url === '/health' || url === '/')) {
+    if (
+      req.method === 'GET' &&
+      (url === '/health' || url === '/api/health' || url === '/')
+    ) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(
         JSON.stringify({
           ok: true,
+          service: SERVICE_ID,
           lastState,
           lastDetail: lastDetail || undefined,
           lastAt,
@@ -613,6 +620,21 @@ function startStateServer(onState, opts = {}) {
         }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true, shown: true }));
+      });
+      return;
+    }
+
+    // Hide pet overlay; tray process stays alive (SessionEnd / terminal quit)
+    if (req.method === 'POST' && (url === '/hide' || url.startsWith('/hide?'))) {
+      req.resume();
+      req.on('end', () => {
+        try {
+          if (onHide) onHide();
+        } catch (err) {
+          console.error('[state-server] onHide error', err);
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, hidden: true }));
       });
       return;
     }
@@ -717,6 +739,7 @@ function startStateServer(onState, opts = {}) {
 module.exports = {
   HOST,
   PORT,
+  SERVICE_ID,
   MAX_BODY_BYTES,
   ALLOWED_STATES,
   STATE_ALIASES,

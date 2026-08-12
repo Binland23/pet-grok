@@ -16,36 +16,54 @@ Inspired by clawd-on-desk and Codex Pets.
 
 ## Quick start
 
+**Which file do I open?** (project root — not inside `app/`)
+
+| OS | Double-click |
+|----|----------------|
+| **Mac daily** | **`Pet Grok.app` on your Desktop** (no Terminal) |
+| **Mac from folder** | `OPEN ON MAC - Open Pet Grok.command` |
+| **Windows** | `OPEN ON WINDOWS - Open Pet Grok.lnk` (preferred, has icon) |
+| Windows backups | `OPEN ON WINDOWS - Open Pet Grok.vbs` or `OPEN ON WINDOWS - Open Pet Grok (console).bat` |
+
+See also **`READ ME FIRST - which file to open.txt`** at the project root.
+
+Install / reinstall the Desktop app after moving the project:
+
+```bash
+python3 scripts/install-desktop-app.py
+```
+
+The app opens automatically (Electron desktop window). The terminal/console is minimized automatically. First launch runs `npm install` if Electron is not installed yet. Launchers verify service identity on port **7788** (`service: pet-grok`) so they re-show an existing pet instead of starting a second instance.
+
 ### macOS (recommended)
 
 1. **Install Node.js 18+** if needed  
    - [nodejs.org](https://nodejs.org/) or Homebrew: `brew install node`
 2. **Download / clone** this repo and open the folder in Finder.
-3. **First time only** — double-click **`RUN ME ONCE FIRST.command`**  
+3. **Daily use:** double-click **`Pet Grok.app`** on the Desktop  
+   - First time (or after moving the project):  
+     `python3 scripts/install-desktop-app.py`  
+4. **Or from the project folder:** double-click **`OPEN ON MAC - Open Pet Grok.command`**  
    - If macOS blocks it: right-click → **Open** → **Open**  
    - If Terminal says permission denied:  
-     `chmod +x "RUN ME ONCE FIRST.command" "RUN ME.command"`  
-   - This runs `npm install` and starts Pet Grok.
-4. **Every later launch** — double-click **`RUN ME.command`**  
-   - The Terminal window minimizes automatically so it stays out of the way (click its Dock icon to show it again / stop the pet with Ctrl+C).
+     `chmod +x "OPEN ON MAC - Open Pet Grok.command"`  
+   - First launch installs dependencies, then starts Pet Grok.
 5. Confirm a pet is on the desktop and a **menu bar** icon is present (no Dock icon).
 6. In a Grok TUI session: run **`/hooks`**, press **`r`** to reload hooks, and submit a prompt that uses tools — the pet should go **thinking → working → done**.
 
-**Terminal (macOS):**
+**Terminal (from project root):**
 
 ```bash
-cd /path/to/pet-grok
+cd /path/to/pet-grok/app
 npm install   # first time only
 npm start
 ```
 
 ### Windows
 
-| | First time | Every later launch |
-|---|------------|--------------------|
-| **Windows** | `RUN ME ONCE FIRST.bat` | `RUN ME.bat` |
+Double-click **`OPEN ON WINDOWS - Open Pet Grok.lnk`** (or the `.vbs` / console `.bat` backup). First launch installs dependencies, then starts Pet Grok.
 
-Or `npm install` then `npm start` in the project folder.
+Or `npm install` then `npm start` inside the **`app`** folder.
 
 ### What first launch does
 
@@ -73,8 +91,9 @@ Grok lifecycle event
 | `PreToolUse`       | `working`  | Laptop typing (vigorous)          |
 | `Stop`             | `done`     | Celebrate briefly → idle          |
 | `Notification`     | `idle`     | Turn-complete ping → idle; approval / error → brief alert then idle |
-| `SessionEnd`       | `sleep`    | Zzz                               |
-| *(60s silence)*    | `sleep`    | Idle timeout                      |
+| `SessionEnd`       | `sleep` + **hide** | Zzz, then **hide** overlay (tray stays; terminal/session over) |
+| *(last Grok process dies)* | **hide** | Force-quit Terminal etc. (no clean SessionEnd) |
+| *(60s silence)*    | `sleep`    | Idle timeout only — stays visible |
 | *(hover while asleep)* | `idle` | Wakes on mouse over pet       |
 
 ### Manual state testing
@@ -90,13 +109,16 @@ curl -s -X POST 127.0.0.1:7788/state -d sleep
 curl -s -X POST 127.0.0.1:7788/state -d wake
 curl -s -X POST 127.0.0.1:7788/state -d click   # WEEEE bounce (also accepts: weee)
 curl -s -X POST 127.0.0.1:7788/show
+curl -s -X POST 127.0.0.1:7788/hide
 ```
 
 > Dashboard **manual lock** is separate from curl: picking a pose in the dashboard holds it (and ignores hooks) until you press **Auto**. Curl/`POST /state` alone still uses normal auto transitions (wake/done settle to idle).
 
 `POST /show` (and SessionStart → `wake`) re-shows a **running but hidden** pet. They do **not** launch Pet Grok if it is not already running.
 
-`GET http://127.0.0.1:7788/health` → JSON `{ "ok": true, "lastState": "...", "pid": ... }`
+`POST /hide` (and SessionEnd → `sleep`) hides a **running** pet overlay. The tray process stays alive so the next SessionStart can unhide it. Idle timeout sleep does **not** hide.
+
+`GET http://127.0.0.1:7788/health` (or `/api/health`) → JSON `{ "ok": true, "service": "pet-grok", "lastState": "...", "pid": ... }`
 
 You should see the liquid-glass **status bubble** under the pet flash to **thinking** / **working** / **done**, and the sprite sheet animation change. With hooks refreshed, tool events also show a short plain-language activity line (e.g. `Running npm test`, `Editing pet.js`) that holds for several seconds so you can read it. Toggle the bubble from the dashboard (**Show status**), the tray / pet menu, or the hover chevron.
 
@@ -275,38 +297,30 @@ python3 scripts/interpolate_smooth_frames.py <theme-id> <state>
 ## Project layout
 
 ```
-├── package.json
-├── README.md
-├── RUN ME.command              # macOS daily launcher (double-click)
-├── RUN ME ONCE FIRST.command   # macOS first-time install + start
-├── RUN ME.bat                  # Windows daily launcher
-├── RUN ME ONCE FIRST.bat       # Windows first-time install + start
-├── main/
-│   ├── main.js           # pet window, dashboard, tray, IPC
-│   ├── platform.js       # OS helpers (AOT, tray, file URLs)
-│   ├── themes.js         # list/load pet themes
-│   ├── state-server.js   # 127.0.0.1:7788
-│   ├── hooks.js          # install/uninstall pet.json
-│   ├── pet-state-hook.js # bundled helper copied into ~/.grok/hooks
-│   └── prefs.js          # position, size, mute, themeId
-├── preload/
-│   ├── preload.js
-│   └── dashboard-preload.js
-├── renderer/
-│   ├── index.html        # pet UI + animations
-│   ├── dashboard.html    # settings dashboard
-│   └── assets/
-│       ├── race-crab/
-│       ├── cloud-pup/
-│       ├── bubble-axolotl/
-│       └── matcha-frog/
-├── scripts/
-│   └── process_theme_poses.py
-└── themes/
-    ├── race-crab/
-    ├── cloud-pup/
-    ├── bubble-axolotl/
-    └── matcha-frog/
+<project-root>/
+├── READ ME FIRST - which file to open.txt
+├── OPEN ON MAC - Open Pet Grok.command
+├── OPEN ON WINDOWS - Open Pet Grok.lnk
+├── OPEN ON WINDOWS - Open Pet Grok.vbs
+├── OPEN ON WINDOWS - Open Pet Grok (console).bat
+└── app/                        # all real content lives here
+    ├── package.json
+    ├── README.md
+    ├── icons/
+    │   ├── play-pet-grok-icon.png
+    │   └── play-pet-grok-icon.ico
+    ├── main/
+    │   ├── main.js           # pet window, dashboard, tray, IPC
+    │   ├── platform.js       # OS helpers (AOT, tray, file URLs)
+    │   ├── themes.js         # list/load pet themes
+    │   ├── state-server.js   # 127.0.0.1:7788
+    │   ├── hooks.js          # install/uninstall pet.json
+    │   ├── pet-state-hook.js # bundled helper copied into ~/.grok/hooks
+    │   └── prefs.js          # position, size, mute, themeId
+    ├── preload/
+    ├── renderer/
+    ├── scripts/
+    └── themes/
 ```
 
 ## Platform notes
@@ -317,7 +331,7 @@ python3 scripts/interpolate_smooth_frames.py <theme-id> <state>
 | Tray | Menu bar icon; right-click menu | Notification area; left-click opens menu |
 | Hooks dir | `~/.grok/hooks/` | `%USERPROFILE%\.grok\hooks\` |
 | Manual curl | `curl -s -X POST …` | Use `curl.exe` (not PowerShell’s `curl` alias) |
-| Launcher | `RUN ME.command` or `npm start` | `RUN ME.bat` or `npm start` |
+| Launcher | `OPEN ON MAC - Open Pet Grok.command` or `npm start` in `app/` | `OPEN ON WINDOWS - Open Pet Grok.lnk` or `npm start` in `app/` |
 | App identity | Dock hidden | `AppUserModelId` `com.petgrok.app` |
 
 Click-through (transparent pixels) and drag work on both OSes. Window size is re-applied on drag to avoid DPI size growth on Windows.

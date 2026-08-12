@@ -8,7 +8,61 @@
   const statusToggleEl = document.getElementById('statusToggle');
   const api = window.petAPI;
   const { advanceFrame, shouldPreserveFrame, framePathsForMode } = window.PetAnimationLoop;
+  const {
+    statusPrimaryLabel,
+    shouldShowStatusChevron,
+    resolveStatusChevronVisibility,
+    isClickState,
+    normalizeStatusState,
+  } = window.PetStatusChrome || {};
   const ASSET = './assets/race-crab/';
+
+  function primaryLabel(state) {
+    if (typeof statusPrimaryLabel === 'function') return statusPrimaryLabel(state);
+    const key = String(state || '').toLowerCase();
+    if (key === 'click' || key === 'weee' || key === 'whee' || key === 'wooo') return 'WEEEE';
+    return String(state || '');
+  }
+
+  /** Mirrors resolveStatusChevronVisibility (shipped) for updateIgnore wiring. */
+  function chevronFromPointer(opts) {
+    if (typeof resolveStatusChevronVisibility === 'function') {
+      return resolveStatusChevronVisibility(opts);
+    }
+    // Fallback if status-chrome failed to load
+    const statusVisible = !!(opts && opts.statusVisible);
+    const overPet = !!(opts && opts.overPet);
+    const overStatus = !!(opts && opts.overStatus);
+    const toggleHitRaw = !!(opts && opts.toggleHitRaw);
+    const already = !!(opts && opts.chevronAlreadyVisible);
+    const overToggleHold = toggleHitRaw && (already || (statusVisible && overStatus));
+    if (typeof shouldShowStatusChevron === 'function') {
+      return shouldShowStatusChevron({
+        statusVisible,
+        overPet,
+        overStatus,
+        overToggle: overToggleHold,
+      });
+    }
+    if (overToggleHold) return true;
+    if (statusVisible) return overStatus;
+    return overPet;
+  }
+
+  function stateIsClick(state) {
+    if (typeof isClickState === 'function') return isClickState(state);
+    const key = String(state || '').toLowerCase();
+    return key === 'click' || key === 'weee' || key === 'whee' || key === 'wooo';
+  }
+
+  function normalizeStateName(state) {
+    if (typeof normalizeStatusState === 'function') {
+      const key = normalizeStatusState(state);
+      return stateIsClick(key) ? 'click' : key;
+    }
+    const key = String(state || '').trim().toLowerCase();
+    return stateIsClick(key) ? 'click' : key;
+  }
 
   /**
    * Playback behaviour per state. fps is a fallback only — loadAnimations
@@ -393,13 +447,11 @@
     return true;
   }
 
-  const STATUS_LABELS = {
-    click: 'WEEEE',
-  };
-
   function applyShowStatus(visible) {
     showStatus = !!visible;
     if (statusEl) statusEl.classList.toggle('hidden', !showStatus);
+    const stageEl = document.getElementById('stage');
+    if (stageEl) stageEl.classList.toggle('status-collapsed', !showStatus);
     if (statusToggleEl) {
       statusToggleEl.classList.toggle('status-on', showStatus);
       statusToggleEl.setAttribute('aria-pressed', showStatus ? 'true' : 'false');
@@ -597,12 +649,13 @@
    */
   function setStatus(text, detail) {
     if (!statusEl) return;
-    const key = String(text || '').toLowerCase();
-    const label = STATUS_LABELS[key] || text;
+    const key = normalizeStateName(text);
+    const label = primaryLabel(key || text);
     if (statusLabelEl) statusLabelEl.textContent = label;
     else statusEl.textContent = label;
 
-    const settleStates = key === 'idle' || key === 'sleep' || key === 'wake' || key === 'click';
+    const settleStates =
+      key === 'idle' || key === 'sleep' || key === 'wake' || key === 'click';
     const forceStates = settleStates || key === 'done' || key === 'alert';
 
     if (typeof detail === 'string') {
@@ -623,7 +676,7 @@
       presentDetail(STATE_DETAIL_DEFAULTS[key]);
     }
 
-    statusEl.className = 'st-' + key + (showStatus ? '' : ' hidden');
+    statusEl.className = 'st-' + (key || 'idle') + (showStatus ? '' : ' hidden');
     // Only flash the chip on state label changes, not every detail refresh
     statusEl.classList.add('flash');
     void statusEl.offsetWidth;
@@ -632,7 +685,7 @@
 
   function setState(next, options = {}) {
     if (!next) return;
-    next = String(next).toLowerCase();
+    next = normalizeStateName(next);
     const requestGen = options._requestGen || ++stateRequestGen;
     // sticky: true from dashboard manual lock; sticky: false clears it.
     // Omit sticky (hook / internal transitions) to leave the flag alone unless
@@ -806,6 +859,8 @@
   /**
    * Short local "you clicked me" animation, then restore prior state.
    * Does not go through the Grok state server.
+   * Always paints the WEEEE status label for the ack window — even if click
+   * frames are still decoding (we fall back to idle frames for drawing only).
    */
   function playClickAck() {
     if (current !== 'click') {
@@ -818,29 +873,51 @@
     if (clickTimer) clearTimeout(clickTimer);
     clickPulse = 1;
     playWeeeSound();
-    applyState('click');
-    mode = 'play';
-    playOnce = true;
-    const clickMs = onceDurationMs('click', CLICK_MS_FALLBACK);
-    clickTimer = setTimeout(() => {
+
+    const startClick = () => {
       if (gen !== clickAnimGen) return;
-      clickTimer = null;
-      clickPulse = 0;
-      if (current === 'click') {
-        applyState(preClickState && preClickState !== 'click' ? preClickState : 'idle');
-      }
-    }, clickMs);
+      applyState('click');
+      mode = 'play';
+      playOnce = true;
+      // Label must say WEEEE even if we temporarily draw borrowed frames
+      setStatus('click', '');
+      const clickMs = onceDurationMs('click', CLICK_MS_FALLBACK);
+      clickTimer = setTimeout(() => {
+        if (gen !== clickAnimGen) return;
+        clickTimer = null;
+        clickPulse = 0;
+        if (current === 'click') {
+          applyState(preClickState && preClickState !== 'click' ? preClickState : 'idle');
+        }
+      }, clickMs);
+    };
+
+    if (anims.click) {
+      startClick();
+      return;
+    }
+    // Ensure click frames without losing the WEEEE label while loading
+    setStatus('click', '');
+    current = 'click';
+    ensureStateAnimation('click')
+      .then(() => startClick())
+      .catch(() => startClick());
   }
 
   function applyState(name) {
-    if (!anims[name] && anims.idle) name = 'idle';
+    name = normalizeStateName(name) || name;
+    // Keep logical click state even when frames are still loading (draw falls
+    // back to idle via anims[current] || anims.idle). Other missing states → idle.
+    if (name !== 'click' && !anims[name] && anims.idle) {
+      name = 'idle';
+    }
     current = name;
     // Always snap to this state's primary frame immediately so harness
     // transitions are visible.
     frameIndex = 0;
     frameDirection = 1;
     frameAcc = 0;
-    const p = profile(name);
+    const p = profile(anims[name] ? name : 'idle');
     if (p.static) {
       // Fully frozen pose (idle / sleep)
       mode = 'hold';
@@ -858,6 +935,7 @@
       scheduleHold(name);
     }
     // Idle-ish poses drop the activity line (forced); agent poses keep / hold detail.
+    // Click always shows the WEEEE primary label (never "click" / blank).
     if (name === 'idle' || name === 'sleep' || name === 'wake' || name === 'click') {
       setStatus(name, '');
     } else if (name === 'done') {
@@ -866,7 +944,16 @@
       setStatus(name, lastDetail || STATE_DETAIL_DEFAULTS[name] || '');
     }
     markDirty();
-    console.log('[pet] applied state', name, 'frames=', (anims[name] && anims[name].frames.length) || 0, 'sticky=', stickyHold, 'detail=', lastDetail || '-');
+    console.log(
+      '[pet] applied state',
+      name,
+      'frames=',
+      (anims[name] && anims[name].frames.length) || 0,
+      'sticky=',
+      stickyHold,
+      'detail=',
+      lastDetail || '-'
+    );
   }
 
   function stopRenderLoop() {
@@ -1046,25 +1133,32 @@
     const onPet = hitTest(x, y);
     const onStatus = hitTestStatus(x, y);
     const onBridge = hitTestStatusBridge(x, y);
-    // Chevron stays hittable while chrome is hot, or when arriving via pet /
-    // status / bridge (so hover over the bubble also reveals the arrow).
-    const onToggle =
-      hitTestToggle(x, y) &&
-      (overChrome ||
-        onPet ||
-        onStatus ||
-        onBridge ||
-        (statusToggleEl && statusToggleEl.classList.contains('visible')));
+    // When the bubble is active, the chevron is only revealed over the bubble
+    // (or itself once already .visible). When minimized, it reveals over the pet.
+    // Never promote an invisible toggle hit-zone via bare showStatus/onPet.
+    const toggleHitRaw = hitTestToggle(x, y);
+    const chevronAlreadyVisible = !!(
+      statusToggleEl && statusToggleEl.classList.contains('visible')
+    );
+    const showChevron = chevronFromPointer({
+      statusVisible: showStatus,
+      overPet: onPet,
+      overStatus: onStatus,
+      toggleHitRaw,
+      chevronAlreadyVisible,
+    });
+    // Toggle is interactive only when the chevron is shown (or about to be).
+    const onToggle = toggleHitRaw && showChevron;
+    // Interactive chrome: pet, toggle, status bubble (and bridge while status on).
     const hit = onPet || onToggle || onStatus || onBridge;
     overPet = onPet;
+    setStatusToggleVisible(showChevron);
     if (hit !== overChrome) {
       overChrome = hit;
-      setStatusToggleVisible(hit);
       if (petAreaEl) petAreaEl.classList.toggle('hot', hit);
       if (api) api.setIgnoreMouse(!hit);
-    } else if (hit) {
-      // Stay hot; refresh toggle visibility (e.g. after status on/off reflow)
-      setStatusToggleVisible(true);
+    } else if (hit && petAreaEl) {
+      petAreaEl.classList.toggle('hot', true);
     }
     if (onPet && current === 'sleep') {
       if (api) api.wakeFromIdle();
@@ -1081,7 +1175,17 @@
     downAt = performance.now();
     overPet = true;
     overChrome = true;
-    setStatusToggleVisible(true);
+    // While pointer is down on the pet, only show the chevron if status is minimized
+    // (active bubble: chevron stays bubble-only).
+    setStatusToggleVisible(
+      chevronFromPointer({
+        statusVisible: showStatus,
+        overPet: true,
+        overStatus: false,
+        toggleHitRaw: false,
+        chevronAlreadyVisible: false,
+      })
+    );
     if (api) api.setIgnoreMouse(false);
   }
 

@@ -13,14 +13,14 @@ Desktop companion for the Grok Build CLI. v1.1 turns a single-pet prototype into
    - [nodejs.org](https://nodejs.org/) LTS, or Homebrew:  
      `brew install node`
 2. **Get the project** — clone or download this repo and open the folder in Finder.
-3. **First launch only** — double-click **`RUN ME ONCE FIRST.command`**  
+3. Double-click **`OPEN ON MAC - Open Pet Grok.command`** at the project root  
    - If Gatekeeper blocks it: **right-click → Open → Open**  
    - If Terminal says “permission denied”:  
      ```bash
-     chmod +x "RUN ME ONCE FIRST.command" "RUN ME.command"
+     chmod +x "OPEN ON MAC - Open Pet Grok.command"
      ```
-   - This runs `npm install` and starts Pet Grok.
-4. **Later launches** — double-click **`RUN ME.command`** (or `npm start` in Terminal).
+   - First launch runs `npm install` if needed, then starts Pet Grok.
+4. **Later launches** — same file (or `npm start` inside the **`app/`** folder).
 5. You should see:
    - A pet on the desktop (always-on-top, transparent)
    - A **menu bar** icon (no Dock icon)
@@ -33,7 +33,7 @@ Desktop companion for the Grok Build CLI. v1.1 turns a single-pet prototype into
 **Terminal alternative:**
 
 ```bash
-cd /path/to/pet-grok
+cd /path/to/pet-grok/app
 npm install   # first time
 npm start
 ```
@@ -100,12 +100,15 @@ After install/refresh: open **`/hooks`**, press **`r`**, and you should see Pet 
 | PreToolUse / PostToolUse | `working` |
 | Stop | `done` |
 | Notification / tool failure | `alert` |
-| SessionEnd | `sleep` |
-| ~60s quiet | `sleep` |
+| SessionEnd | `sleep` + **hide** overlay |
+| Last Grok process dies (e.g. force-quit Terminal) | **hide** overlay |
+| ~60s quiet | `sleep` (stays visible) |
 
-### SessionStart unhide
+### SessionStart unhide / SessionEnd hide
 
 If Pet Grok is **already running** but **hidden**, starting a Grok session posts `wake` and **shows** the overlay again (`POST /show` supported too). Does **not** auto-launch a new process if the pet is quit.
+
+When a Grok session ends (`SessionEnd`) — or the last Grok TUI process dies after the terminal is quit — the pet **hides** automatically (`POST /hide`). Idle timeout still only sleeps. Show again via a new Grok session, tray **Show Pet**, or the dashboard.
 
 ---
 
@@ -121,7 +124,7 @@ If Pet Grok is **already running** but **hidden**, starting a Grok session posts
 
 ## Platform & tooling
 
-- First-class **macOS + Windows** launchers (`RUN ME*.command` / `RUN ME*.bat`)
+- First-class **macOS + Windows** launchers (`OPEN ON MAC - Open Pet Grok.command` / `OPEN ON WINDOWS - Open Pet Grok.lnk`)
 - Theme pose processor: `scripts/process_theme_poses.py`
 - Expanded unit tests for themes, hooks, click assets, and `/show`
 
@@ -130,7 +133,7 @@ If Pet Grok is **already running** but **hidden**, starting a Grok session posts
 ## Install / upgrade notes
 
 1. Pull `main` (or install this release).
-2. **macOS:** double-click `RUN ME ONCE FIRST.command` (first time) or `RUN ME.command` (later); or `npm install` + `npm start`.
+2. **macOS:** double-click `OPEN ON MAC - Open Pet Grok.command`; **Windows:** `OPEN ON WINDOWS - Open Pet Grok.lnk`; or `npm install` + `npm start` in `app/`.
 3. Dashboard → **Refresh hooks** (or Install hooks).
 4. In Grok TUI: **`/hooks` → `r`** to reload.
 5. Pick a pet from the dashboard.

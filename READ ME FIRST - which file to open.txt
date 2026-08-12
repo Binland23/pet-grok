@@ -1,0 +1,34 @@
+========================================
+  Pet Grok — which file do I open?
+========================================
+
+  DAILY USE (Mac) — easiest:
+  →  Double-click  Pet Grok.app  on your Desktop
+     (opens like a normal app; no Terminal)
+
+  From this project folder (Mac):
+  →  OPEN ON MAC - Open Pet Grok.command
+
+  If you use Windows:
+  →  OPEN ON WINDOWS - Open Pet Grok.lnk
+     (pet icon — preferred)
+
+  Windows backups if the .lnk fails:
+  →  OPEN ON WINDOWS - Open Pet Grok.vbs
+  →  OPEN ON WINDOWS - Open Pet Grok (console).bat
+
+The Desktop app is a small launcher only — your data stays in this project folder.
+If you move the project, reinstall the Desktop app:
+  python3 scripts/install-desktop-app.py
+
+First Mac open: if macOS blocks it, right-click → Open → Open.
+
+Double-click opens the Pet Grok desktop window (Electron).
+The terminal/console is minimized automatically.
+
+First launch installs npm packages if needed (needs Node.js 18+).
+Do NOT open files inside the app folder for daily use.
+Do NOT open index.html in a browser — this is an Electron desktop app.
+
+State server (hooks): http://127.0.0.1:7788/  (service: pet-grok)
+  GET /api/health  → {"ok":true,"service":"pet-grok",...}

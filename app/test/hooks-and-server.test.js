@@ -344,13 +344,18 @@ describe('state server HTTP (real startStateServer)', () => {
   /** @type {string[]} */
   const received = [];
   let showCalls = 0;
+  let hideCalls = 0;
 
   before(async () => {
     showCalls = 0;
+    hideCalls = 0;
     server = await startStateServer((s) => received.push(s), {
       port: 0,
       onShow: () => {
         showCalls += 1;
+      },
+      onHide: () => {
+        hideCalls += 1;
       },
     });
     port = server.server.address().port;
@@ -399,6 +404,18 @@ describe('state server HTTP (real startStateServer)', () => {
     assert.deepEqual(received, []);
   });
 
+  it('POST /hide invokes onHide without changing pet state', async () => {
+    received.length = 0;
+    hideCalls = 0;
+    const before = server.getLastState();
+    const r = await post(port, '/hide', '');
+    assert.equal(r.status, 200);
+    assert.match(r.body, /"hidden"\s*:\s*true/);
+    assert.equal(hideCalls, 1);
+    assert.equal(server.getLastState(), before);
+    assert.deepEqual(received, []);
+  });
+
   it('POST /hook with Grok event JSON maps to pet states (shipped HTTP hook path)', async () => {
     received.length = 0;
     const r1 = await postGrokHttpHook(port, 'user_prompt_submit');
@@ -419,13 +436,16 @@ describe('state server HTTP (real startStateServer)', () => {
     assert.deepEqual(received, ['thinking', 'working', 'done']);
   });
 
-  it('GET /health reports lastState and history', async () => {
+  it('GET /health reports lastState, history, and service identity', async () => {
     await post(port, '/state', 'thinking');
     const h = await get(port, '/health');
     const j = JSON.parse(h.body);
     assert.equal(j.ok, true);
+    assert.equal(j.service, 'pet-grok');
     assert.equal(j.lastState, 'thinking');
     assert.ok(Array.isArray(j.history));
+    const api = await get(port, '/api/health');
+    assert.equal(JSON.parse(api.body).service, 'pet-grok');
   });
 
   it('rejects unknown state with 400', async () => {
@@ -540,11 +560,23 @@ describe('pet-state-hook.js (real Grok hook script)', () => {
   let server;
   /** @type {string[]} */
   const received = [];
+  let showCalls = 0;
+  let hideCalls = 0;
   let scriptCopy;
 
   before(async () => {
+    showCalls = 0;
+    hideCalls = 0;
     try {
-      server = await startStateServer((s) => received.push(s), { port: 7788 });
+      server = await startStateServer((s) => received.push(s), {
+        port: 7788,
+        onShow: () => {
+          showCalls += 1;
+        },
+        onHide: () => {
+          hideCalls += 1;
+        },
+      });
     } catch {
       server = null;
     }
@@ -650,6 +682,54 @@ describe('pet-state-hook.js (real Grok hook script)', () => {
     }
     assert.equal(last, 'idle', `expected idle after turn_complete notification, got ${last}`);
   });
+
+  it('SessionEnd sleep posts /hide so the overlay auto-hides', async () => {
+    if (!server) {
+      // Live pet owns 7788 — cannot assert onHide counts; exercise script only
+      const r = await runHookScript('sleep', scriptCopy, {
+        hookEventName: 'session_end',
+        sessionId: 'test-session-end',
+      });
+      assert.equal(r.code, 0, `hook script failed: ${r.err}`);
+      return;
+    }
+    hideCalls = 0;
+    received.length = 0;
+    const r = await runHookScript('sleep', scriptCopy, {
+      hookEventName: 'session_end',
+      sessionId: 'test-session-end',
+    });
+    assert.equal(r.code, 0, `hook script failed: ${r.err}`);
+    // Allow async /state then /hide
+    for (let i = 0; i < 20 && hideCalls < 1; i++) {
+      await new Promise((res) => setTimeout(res, 50));
+    }
+    assert.ok(received.includes('sleep'), 'expected sleep state');
+    assert.equal(hideCalls, 1, 'SessionEnd sleep must POST /hide');
+  });
+
+  it('SessionStart wake posts /show so a hidden pet reappears', async () => {
+    if (!server) {
+      const r = await runHookScript('wake', scriptCopy, {
+        hookEventName: 'session_start',
+        sessionId: 'test-session-start',
+      });
+      assert.equal(r.code, 0, `hook script failed: ${r.err}`);
+      return;
+    }
+    showCalls = 0;
+    received.length = 0;
+    const r = await runHookScript('wake', scriptCopy, {
+      hookEventName: 'session_start',
+      sessionId: 'test-session-start',
+    });
+    assert.equal(r.code, 0, `hook script failed: ${r.err}`);
+    for (let i = 0; i < 20 && showCalls < 1; i++) {
+      await new Promise((res) => setTimeout(res, 50));
+    }
+    assert.ok(received.includes('wake'), 'expected wake state');
+    assert.equal(showCalls, 1, 'SessionStart wake must POST /show');
+  });
 });
 
 describe('platform helpers', () => {
@@ -669,5 +749,50 @@ describe('platform helpers', () => {
     assert.ok(Array.isArray(platform.trayIconCandidates()));
     assert.ok(platform.trayIconCandidates().length > 0);
     assert.equal(typeof platform.restartHint(), 'string');
+  });
+
+  it('alwaysOnTopAttempts prefers screen-saver first', () => {
+    const attempts = platform.alwaysOnTopAttempts();
+    assert.ok(Array.isArray(attempts));
+    assert.ok(attempts.length >= 2);
+    assert.equal(attempts[0][0], 'screen-saver');
+    assert.equal(typeof attempts[0][1], 'number');
+  });
+
+  it('applyOverlayZOrder pins AOT after visible-on-all-workspaces', () => {
+    const calls = [];
+    const win = {
+      isDestroyed: () => false,
+      setVisibleOnAllWorkspaces(flag, opts) {
+        calls.push(['voaw', flag, opts]);
+      },
+      setAlwaysOnTop(flag, level, relativeLevel) {
+        calls.push(['aot', flag, level, relativeLevel]);
+      },
+      moveTop() {
+        calls.push(['moveTop']);
+      },
+    };
+    const level = platform.applyOverlayZOrder(win);
+    assert.equal(level, 'screen-saver');
+    assert.equal(calls[0][0], 'voaw');
+    assert.equal(calls[0][1], true);
+    assert.equal(calls[0][2] && calls[0][2].visibleOnFullScreen, true);
+    assert.equal(calls[1][0], 'aot');
+    assert.equal(calls[1][1], true);
+    assert.equal(calls[1][2], 'screen-saver');
+    assert.equal(calls[1][3], 1);
+    assert.equal(calls[2][0], 'moveTop');
+  });
+
+  it('applyOverlayZOrder no-ops on destroyed windows', () => {
+    const win = {
+      isDestroyed: () => true,
+      setAlwaysOnTop() {
+        throw new Error('should not run');
+      },
+    };
+    assert.equal(platform.applyOverlayZOrder(win), null);
+    assert.equal(platform.applyOverlayZOrder(null), null);
   });
 });

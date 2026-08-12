@@ -37,20 +37,55 @@ function configureAppChrome(app) {
 }
 
 /**
+ * Preferred always-on-top attempts: [level, relativeLevel].
+ * Higher levels + relativeLevel keep the pet above browsers (Edge/Chrome)
+ * that otherwise win z-order among normal floating windows.
+ * @returns {Array<[string, number]>}
+ */
+function alwaysOnTopAttempts() {
+  // relativeLevel is macOS-only in practice; other OSes ignore it safely.
+  if (isWin) {
+    return [
+      ['screen-saver', 1],
+      ['pop-up-menu', 1],
+      ['floating', 1],
+      ['normal', 0],
+    ];
+  }
+  if (isMac) {
+    return [
+      ['screen-saver', 1],
+      ['status', 1],
+      ['pop-up-menu', 1],
+      ['floating', 1],
+      ['normal', 0],
+    ];
+  }
+  return [
+    ['screen-saver', 1],
+    ['floating', 1],
+    ['normal', 0],
+  ];
+}
+
+/**
  * Always-on-top levels differ by OS; try preferred order until one applies.
  * @param {import('electron').BrowserWindow} win
+ * @returns {string | null} Applied level name, or null
  */
 function setAlwaysOnTopSafe(win) {
-  if (!win || win.isDestroyed()) return;
-  const levels = isWin
-    ? ['screen-saver', 'pop-up-menu', 'floating', 'normal']
-    : ['screen-saver', 'floating', 'normal'];
-  for (const level of levels) {
+  if (!win || win.isDestroyed()) return null;
+  for (const [level, relativeLevel] of alwaysOnTopAttempts()) {
     try {
-      win.setAlwaysOnTop(true, level);
+      win.setAlwaysOnTop(true, level, relativeLevel);
       return level;
     } catch {
-      /* try next */
+      try {
+        win.setAlwaysOnTop(true, level);
+        return level;
+      } catch {
+        /* try next */
+      }
     }
   }
   try {
@@ -63,19 +98,47 @@ function setAlwaysOnTopSafe(win) {
 
 /**
  * Visible on all Spaces / virtual desktops (best-effort; stronger on macOS).
+ * skipTransformProcessType avoids dock/process-type thrash on reassert.
  * @param {import('electron').BrowserWindow} win
  */
 function setVisibleOnAllWorkspacesSafe(win) {
   if (!win || win.isDestroyed()) return;
   try {
-    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    win.setVisibleOnAllWorkspaces(true, {
+      visibleOnFullScreen: true,
+      skipTransformProcessType: true,
+    });
   } catch {
     try {
-      win.setVisibleOnAllWorkspaces(true);
+      win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     } catch {
-      /* Windows / older Electron may no-op */
+      try {
+        win.setVisibleOnAllWorkspaces(true);
+      } catch {
+        /* Windows / older Electron may no-op */
+      }
     }
   }
+}
+
+/**
+ * Pin the pet above other app windows (including Edge/Chrome).
+ *
+ * Order matters on macOS: setVisibleOnAllWorkspaces can demote window level,
+ * so always-on-top must be applied *after* it. moveTop re-raises without focus.
+ * @param {import('electron').BrowserWindow} win
+ * @returns {string | null} Applied always-on-top level
+ */
+function applyOverlayZOrder(win) {
+  if (!win || win.isDestroyed()) return null;
+  setVisibleOnAllWorkspacesSafe(win);
+  const level = setAlwaysOnTopSafe(win);
+  try {
+    if (typeof win.moveTop === 'function') win.moveTop();
+  } catch {
+    /* ignore */
+  }
+  return level;
 }
 
 /**
@@ -129,12 +192,12 @@ function pathToAssetUrl(absPath) {
  */
 function restartHint() {
   if (isWin) {
-    return 'Quit other Pet Grok / Electron instances, then run RUN ME.bat or npm start again.';
+    return 'Quit other Pet Grok / Electron instances, then double-click "OPEN ON WINDOWS - Open Pet Grok.lnk" or run npm start in the app folder again.';
   }
   if (isMac) {
-    return 'Quit other Pet Grok / Electron instances, then double-click RUN ME.command or run npm start again.';
+    return 'Quit other Pet Grok / Electron instances, then double-click "OPEN ON MAC - Open Pet Grok.command" or run npm start in the app folder again.';
   }
-  return 'Quit other Pet Grok / Electron instances, then run npm start again.';
+  return 'Quit other Pet Grok / Electron instances, then run npm start in the app folder again.';
 }
 
 module.exports = {
@@ -143,8 +206,10 @@ module.exports = {
   isLinux,
   APP_USER_MODEL_ID,
   configureAppChrome,
+  alwaysOnTopAttempts,
   setAlwaysOnTopSafe,
   setVisibleOnAllWorkspacesSafe,
+  applyOverlayZOrder,
   windowPlatformOptions,
   trayIconCandidates,
   trayIconSize,

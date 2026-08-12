@@ -481,6 +481,11 @@ async function main() {
     const showStatus = await post('/show', '');
     dbg('show status=' + showStatus);
   }
+  // SessionEnd → sleep: hide the overlay (terminal/session is over; tray stays)
+  if (state === 'sleep') {
+    const hideStatus = await post('/hide', '');
+    dbg('hide status=' + hideStatus);
+  }
   // Fail-open: exit 0 even if pet app is not running
   process.exit(0);
 }
