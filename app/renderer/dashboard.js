@@ -43,7 +43,13 @@
     if (!snap) return;
     const serverOk = !!snap.serverOk;
     const last = snap.lastState || '—';
-    const displayState = last === 'click' ? 'WEEEE' : last;
+    const chrome = window.PetStatusChrome;
+    const displayState =
+      chrome && typeof chrome.statusPhaseLabel === 'function'
+        ? chrome.statusPhaseLabel(last) || last
+        : last === 'click'
+          ? 'WEEEE'
+          : last;
     const detail = (snap.lastDetail && String(snap.lastDetail).trim()) || '';
     const hooksOk = !!snap.hooksInstalled;
     const visible = snap.visible !== false;

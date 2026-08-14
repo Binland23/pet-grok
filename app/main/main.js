@@ -11,6 +11,7 @@ const {
   nativeImage,
   ipcMain,
   screen,
+  powerMonitor,
 } = require('electron');
 
 const prefs = require('./prefs');
@@ -76,8 +77,7 @@ if (!gotLock) {
   app.on('second-instance', () => {
     openDashboard();
     if (mainWindow && getState().visible !== false) {
-      if (!mainWindow.isVisible()) mainWindow.show();
-      reassertOverlayZOrder();
+      revealOverlay('second-instance', { userInitiated: true });
     }
   });
 }
@@ -122,6 +122,16 @@ const ACTIVE_AGENT_STATES = new Set(['thinking', 'working', 'wake']);
 const ALERT_SETTLE_MS = 4000;
 /** @type {NodeJS.Timeout | null} */
 let alertSettleTimer = null;
+/**
+ * SessionStart wake is a one-shot stretch. The renderer settles locally, but
+ * if main stays on `wake` the idle timer never arms and the pet is stuck
+ * visible on the desktop. Slightly longer than the ~1.25s fluid clip.
+ */
+const WAKE_SETTLE_MS = 2000;
+/** @type {NodeJS.Timeout | null} */
+let wakeSettleTimer = null;
+/** Delayed AOT / click-through kicks after showInactive (macOS often ignores the first). */
+let overlayRecoverTimers = [];
 
 function clearIdleTimer() {
   if (idleTimer) {
@@ -135,6 +145,26 @@ function clearAlertSettleTimer() {
     clearTimeout(alertSettleTimer);
     alertSettleTimer = null;
   }
+}
+
+function clearWakeSettleTimer() {
+  if (wakeSettleTimer) {
+    clearTimeout(wakeSettleTimer);
+    wakeSettleTimer = null;
+  }
+}
+
+function clearOverlayRecoverTimers() {
+  for (const t of overlayRecoverTimers) clearTimeout(t);
+  overlayRecoverTimers = [];
+}
+
+function scheduleOverlayRecover(fn, ms) {
+  const t = setTimeout(() => {
+    overlayRecoverTimers = overlayRecoverTimers.filter((x) => x !== t);
+    fn();
+  }, ms);
+  overlayRecoverTimers.push(t);
 }
 
 function resetIdleTimer() {
@@ -216,17 +246,160 @@ function appendPushLog(line) {
 /**
  * Keep the transparent pet above other apps (notably Edge/Chrome).
  * Safe to call often; no focus steal.
+ * @param {{ skipWorkspaces?: boolean }} [opts]
  */
-function reassertOverlayZOrder() {
+function reassertOverlayZOrder(opts = {}) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   if (getState().visible === false) return;
   if (!mainWindow.isVisible()) return;
-  platform.applyOverlayZOrder(mainWindow);
+  platform.applyOverlayZOrder(mainWindow, opts);
+}
+
+function notifyOverlayVisible(visible) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  try {
+    mainWindow.webContents.send('pet:overlay-visible', { visible: !!visible });
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * After hide → showInactive (SessionStart reawaken) or display sleep, the
+ * overlay can land on the desktop wallpaper layer, drop mouse-forwarding, and
+ * leave Chromium thinking the page is still hidden. Kick z-order, click-through,
+ * and the renderer on the show tick and again shortly after.
+ * @param {string} [reason]
+ */
+function recoverOverlayPresentation(reason) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (getState().visible === false) return;
+  try {
+    if (mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+      mainWindow.webContents.setBackgroundThrottling(false);
+    }
+  } catch {
+    /* ignore */
+  }
+  platform.resetOverlayClickThrough(mainWindow);
+  // Do NOT VOAW-first here — that is what parks a post-hide window on the desktop.
+  platform.unstickOverlayFromDesktop(mainWindow);
+  notifyOverlayVisible(true);
+  startZOrderKeepAlive();
+  appendPushLog(`[recoverOverlay] ${reason || 'show'}`);
+  clearOverlayRecoverTimers();
+  scheduleOverlayRecover(() => {
+    if (!mainWindow || mainWindow.isDestroyed() || getState().visible === false) return;
+    platform.resetOverlayClickThrough(mainWindow);
+    platform.unstickOverlayFromDesktop(mainWindow);
+    notifyOverlayVisible(true);
+  }, 50);
+  scheduleOverlayRecover(() => {
+    if (!mainWindow || mainWindow.isDestroyed() || getState().visible === false) return;
+    platform.applyOverlayZOrder(mainWindow, { skipWorkspaces: true });
+  }, 250);
+}
+
+/**
+ * Display / lid wake: compositor and ignore-mouse state are often stale.
+ * @param {string} [reason]
+ */
+function recoverOverlayAfterSleep(reason) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (getState().visible === false) return;
+  appendPushLog(`[recoverSleep] ${reason || 'resume'}`);
+  try {
+    const bounds = mainWindow.getBounds();
+    mainWindow.setBounds(bounds);
+    if (mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+      mainWindow.webContents.setBackgroundThrottling(false);
+      if (typeof mainWindow.webContents.invalidate === 'function') {
+        mainWindow.webContents.invalidate();
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  revealOverlay(reason || 'system-resume', { userInitiated: false });
+}
+
+/**
+ * User manually showed the pet after SessionEnd. Don't restore the sleep pose
+ * or they get a frozen sleeper stuck on the desktop.
+ */
+function maybeWakeFromSleepPose() {
+  if (stateControlMode === 'manual') return;
+  if (lastKnownState === 'sleep' || lastKnownState === 'wake') {
+    pushState('idle', { detail: '' });
+  }
+}
+
+function destroyOverlayWindow() {
+  const win = mainWindow;
+  mainWindow = null;
+  stopZOrderKeepAlive();
+  clearOverlayRecoverTimers();
+  if (!win || win.isDestroyed()) return;
+  try {
+    win.removeAllListeners();
+  } catch {
+    /* ignore */
+  }
+  try {
+    win.destroy();
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Conceal the overlay without BrowserWindow.hide().
+ * hide() + later show is what sticks the pet to the desktop wallpaper layer.
+ */
+function concealOverlay() {
+  notifyOverlayVisible(false);
+  clearOverlayRecoverTimers();
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    platform.concealOverlayWindow(mainWindow);
+  }
+  stopZOrderKeepAlive();
+}
+
+/**
+ * Show the overlay again.
+ * If the window was hide()'d (legacy / already-broken), rebuild it.
+ * User-initiated show after a session also leaves the sleep pose.
+ * @param {string} [reason]
+ * @param {{ userInitiated?: boolean }} [opts]
+ */
+function revealOverlay(reason, opts = {}) {
+  const userInitiated = !!opts.userInitiated;
+  if (platform.overlayNeedsRebuild(mainWindow)) {
+    appendPushLog(`[reveal] rebuild after hide() reason=${reason || ''}`);
+    if (
+      userInitiated &&
+      stateControlMode !== 'manual' &&
+      (lastKnownState === 'sleep' || lastKnownState === 'wake')
+    ) {
+      lastKnownState = 'idle';
+      lastKnownDetail = '';
+    }
+    destroyOverlayWindow();
+    createWindow({
+      focusOnShow: userInitiated,
+      reason: reason || 'rebuild',
+      wakeFromSleep: userInitiated,
+    });
+    return;
+  }
+  platform.revealOverlayWindow(mainWindow, { focus: userInitiated });
+  recoverOverlayPresentation(reason || 'reveal');
+  if (userInitiated) maybeWakeFromSleepPose();
 }
 
 function startZOrderKeepAlive() {
   if (zOrderTimer) return;
-  zOrderTimer = setInterval(reassertOverlayZOrder, Z_ORDER_REASSERT_MS);
+  zOrderTimer = setInterval(() => reassertOverlayZOrder({ skipWorkspaces: true }), Z_ORDER_REASSERT_MS);
   // Unref so this timer alone cannot keep the process alive at quit.
   if (typeof zOrderTimer.unref === 'function') zOrderTimer.unref();
 }
@@ -251,13 +424,8 @@ function forceShowPet(reason) {
     prefs.save(s);
     prefsChanged = true;
   }
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    if (!mainWindow.isVisible()) {
-      mainWindow.showInactive();
-    }
-    reassertOverlayZOrder();
-    startZOrderKeepAlive();
-  }
+  const userInitiated = reason === 'http-show' || reason === 'settings-visible';
+  revealOverlay(reason || 'show', { userInitiated });
   appendPushLog(`[forceShow] ${reason || 'show'} visible=true prefsChanged=${prefsChanged}`);
   if (prefsChanged) {
     rebuildTray();
@@ -279,12 +447,7 @@ function forceHidePet(reason) {
     prefs.save(s);
     prefsChanged = true;
   }
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    if (mainWindow.isVisible()) {
-      mainWindow.hide();
-    }
-    stopZOrderKeepAlive();
-  }
+  concealOverlay();
   // Reset session-watch so we only re-hide after the next living session.
   hadLivingGrokSession = false;
   sessionGoneStreak = 0;
@@ -386,6 +549,20 @@ function pushState(petState, opts = {}) {
   broadcastDashboardSnapshot();
 
   if (hasWindow) {
+    // Unhide before the pose IPC so wake frames start on a live renderer.
+    // SessionStart → wake: always unhide if the pet app is already running.
+    if (petState === 'wake') {
+      forceShowPet('session-start-wake');
+    } else if (
+      petState !== 'sleep' &&
+      getState().visible !== false &&
+      mainWindow &&
+      (platform.overlayNeedsRebuild(mainWindow) ||
+        (typeof mainWindow.getOpacity === 'function' && mainWindow.getOpacity() < 0.05))
+    ) {
+      // Other active states: only re-show if not intentionally hidden
+      revealOverlay('state-reshow', { userInitiated: false });
+    }
     /** @type {{ state: string, sticky?: boolean, detail?: string }} */
     const payload = { state: petState };
     if (sticky) payload.sticky = true;
@@ -402,13 +579,6 @@ function pushState(petState, opts = {}) {
     } else {
       send();
     }
-    // SessionStart → wake: always unhide if the pet app is already running
-    if (petState === 'wake') {
-      forceShowPet('session-start-wake');
-    } else if (petState !== 'sleep' && !mainWindow.isVisible() && getState().visible !== false) {
-      // Other active states: only re-show if not intentionally hidden
-      mainWindow.showInactive();
-    }
   }
 
   // Idle timeout policy (disabled entirely while manual lock is on):
@@ -420,11 +590,13 @@ function pushState(petState, opts = {}) {
   if (stateControlMode === 'manual') {
     clearIdleTimer();
     clearAlertSettleTimer();
+    clearWakeSettleTimer();
     return;
   }
   if (petState === 'alert' && !sticky) {
     clearIdleTimer();
     clearAlertSettleTimer();
+    clearWakeSettleTimer();
     alertSettleTimer = setTimeout(() => {
       alertSettleTimer = null;
       // Only settle if we're still showing alert (no newer hook)
@@ -432,8 +604,21 @@ function pushState(petState, opts = {}) {
         pushState('idle', { detail: '' });
       }
     }, ALERT_SETTLE_MS);
+  } else if (petState === 'wake' && !sticky) {
+    // Renderer also settles wake → idle; this is the main-process fallback so
+    // lastKnownState cannot stay on wake (which never auto-sleeps).
+    clearIdleTimer();
+    clearAlertSettleTimer();
+    clearWakeSettleTimer();
+    wakeSettleTimer = setTimeout(() => {
+      wakeSettleTimer = null;
+      if (lastKnownState === 'wake' && stateControlMode === 'auto') {
+        pushState('idle', { detail: '' });
+      }
+    }, WAKE_SETTLE_MS);
   } else {
     clearAlertSettleTimer();
+    clearWakeSettleTimer();
     if (ACTIVE_AGENT_STATES.has(petState)) {
       clearIdleTimer();
     } else if (petState === 'idle') {
@@ -464,7 +649,7 @@ function windowDims() {
   };
 }
 
-function createWindow() {
+function createWindow(opts = {}) {
   const s = getState();
   const { width, height } = windowDims();
   const display = screen.getPrimaryDisplay();
@@ -508,27 +693,55 @@ function createWindow() {
   platform.applyOverlayZOrder(mainWindow);
 
   mainWindow.setIgnoreMouseEvents(true, { forward: true });
+  try {
+    mainWindow.webContents.setBackgroundThrottling(false);
+  } catch {
+    /* ignore */
+  }
 
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
 
-  mainWindow.once('ready-to-show', () => {
-    if (getState().visible !== false) {
-      mainWindow.showInactive();
-      reassertOverlayZOrder();
-      startZOrderKeepAlive();
+  mainWindow.webContents.on('did-finish-load', () => {
+    const shown = getState().visible !== false;
+    notifyOverlayVisible(shown);
+    if (!shown || !lastKnownState) return;
+    /** @type {{ state: string, sticky?: boolean, detail?: string }} */
+    const payload = { state: lastKnownState };
+    if (stateControlMode === 'manual') payload.sticky = true;
+    if (lastKnownDetail) payload.detail = lastKnownDetail;
+    try {
+      mainWindow.webContents.send('pet:state', payload);
+    } catch {
+      /* ignore */
     }
   });
 
-  // Browsers can re-stack above us when they activate; re-pin without focusing.
+  mainWindow.once('ready-to-show', () => {
+    if (getState().visible !== false) {
+      try {
+        mainWindow.setOpacity(1);
+      } catch {
+        /* ignore */
+      }
+      if (opts.focusOnShow) mainWindow.show();
+      else mainWindow.showInactive();
+      recoverOverlayPresentation(opts.reason || 'ready-to-show');
+      if (opts.wakeFromSleep) maybeWakeFromSleepPose();
+    }
+  });
+
+  // Re-pin without focusing. Skip if the overlay is intentionally concealed
+  // (opacity 0) so a stray show event cannot stick it to the desktop.
   mainWindow.on('show', () => {
-    reassertOverlayZOrder();
-    startZOrderKeepAlive();
+    if (getState().visible === false) return;
+    recoverOverlayPresentation('window-show');
   });
   mainWindow.on('hide', () => {
+    notifyOverlayVisible(false);
     stopZOrderKeepAlive();
   });
   mainWindow.on('blur', () => {
-    setTimeout(reassertOverlayZOrder, 50);
+    setTimeout(() => reassertOverlayZOrder({ skipWorkspaces: true }), 50);
   });
 
   mainWindow.on('moved', () => {
@@ -876,12 +1089,9 @@ function applySettingsPatch(patch) {
     }
     if (typeof patch.visible === 'boolean') {
       if (s.visible === false) {
-        mainWindow.hide();
-        stopZOrderKeepAlive();
+        concealOverlay();
       } else {
-        mainWindow.showInactive();
-        reassertOverlayZOrder();
-        startZOrderKeepAlive();
+        revealOverlay('settings-visible', { userInitiated: true });
       }
     }
     mainWindow.webContents.send('pet:prefs', {
@@ -1209,6 +1419,15 @@ function registerIpc() {
     pushState('idle');
   });
 
+  ipcMain.on('pet:settle-idle', (e) => {
+    if (!isSenderWindow(e, mainWindow)) return;
+    if (stateControlMode === 'manual') return;
+    // Wake / done one-shots finished in the renderer — arm quiet timeout.
+    if (lastKnownState === 'wake' || lastKnownState === 'done') {
+      pushState('idle', { detail: '' });
+    }
+  });
+
   ipcMain.on('pet:context-menu', (e) => {
     if (!isSenderWindow(e, mainWindow)) return;
     popupPetMenu();
@@ -1254,9 +1473,17 @@ app.whenReady().then(async () => {
   try {
     stateServer = await startStateServer(
       (petState, meta) => {
-        const detail = meta && meta.detail ? String(meta.detail) : '';
+        const detail = meta && meta.detail ? String(meta.detail).trim() : '';
         console.log('[state]', petState, detail || '');
-        pushState(petState, { detail });
+        const settle =
+          petState === 'idle' ||
+          petState === 'sleep' ||
+          petState === 'wake' ||
+          petState === 'click';
+        // Empty thinking/working/done/alert keeps the last real activity line
+        if (detail) pushState(petState, { detail });
+        else if (settle) pushState(petState, { detail: '' });
+        else pushState(petState);
       },
       {
         // POST /show — unhide if already running (used by tests / manual curl)
@@ -1296,6 +1523,23 @@ app.whenReady().then(async () => {
   // Hide when Grok sessions die (SessionEnd hook + force-quit Terminal fallback)
   startSessionWatch();
 
+  // Lid close / display sleep leaves the transparent overlay frozen or stuck
+  // on the desktop wallpaper layer until we re-pin it.
+  try {
+    powerMonitor.on('resume', () => recoverOverlayAfterSleep('system-resume'));
+    powerMonitor.on('unlock-screen', () => recoverOverlayAfterSleep('unlock-screen'));
+  } catch {
+    /* ignore */
+  }
+  try {
+    screen.on('display-metrics-changed', () => {
+      if (getState().visible === false) return;
+      reassertOverlayZOrder({ skipWorkspaces: true });
+    });
+  } catch {
+    /* ignore */
+  }
+
   // Start idle (not mid-agent); only idle uses quiet timeout
   setTimeout(() => pushState('idle'), 400);
 });
@@ -1308,6 +1552,9 @@ app.on('window-all-closed', () => {
 app.on('before-quit', async () => {
   app.isQuitting = true;
   if (idleTimer) clearTimeout(idleTimer);
+  clearAlertSettleTimer();
+  clearWakeSettleTimer();
+  clearOverlayRecoverTimers();
   stopZOrderKeepAlive();
   stopSessionWatch();
   if (stateServer) {

@@ -126,12 +126,20 @@ function setVisibleOnAllWorkspacesSafe(win) {
  *
  * Order matters on macOS: setVisibleOnAllWorkspaces can demote window level,
  * so always-on-top must be applied *after* it. moveTop re-raises without focus.
+ *
+ * Periodic keep-alive should pass `{ skipWorkspaces: true }`. Re-running VOAW
+ * after hide/showInactive can leave the window on the desktop wallpaper layer
+ * (stuck behind every app) if always-on-top does not take on the same tick.
+ *
  * @param {import('electron').BrowserWindow} win
+ * @param {{ skipWorkspaces?: boolean }} [opts]
  * @returns {string | null} Applied always-on-top level
  */
-function applyOverlayZOrder(win) {
+function applyOverlayZOrder(win, opts = {}) {
   if (!win || win.isDestroyed()) return null;
-  setVisibleOnAllWorkspacesSafe(win);
+  if (!opts.skipWorkspaces) {
+    setVisibleOnAllWorkspacesSafe(win);
+  }
   const level = setAlwaysOnTopSafe(win);
   try {
     if (typeof win.moveTop === 'function') win.moveTop();
@@ -142,6 +150,131 @@ function applyOverlayZOrder(win) {
 }
 
 /**
+ * Re-arm click-through after hide/show or display sleep.
+ * macOS often drops `{ forward: true }` so the transparent bounds become a
+ * dead rectangle stuck on the desktop.
+ *
+ * @param {import('electron').BrowserWindow} win
+ * @returns {boolean}
+ */
+function resetOverlayClickThrough(win) {
+  if (!win || win.isDestroyed()) return false;
+  try {
+    win.setIgnoreMouseEvents(false);
+    win.setIgnoreMouseEvents(true, { forward: true });
+    return true;
+  } catch {
+    try {
+      win.setIgnoreMouseEvents(true, { forward: true });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+/**
+ * Pull a transparent overlay off the desktop wallpaper layer.
+ *
+ * After hide() + showInactive(), setVisibleOnAllWorkspaces(true) can leave
+ * the window at desktop window level. Always-on-top then fails, and the pet
+ * is stuck on the desktop (visible, not interactive, behind every app).
+ * Leave the desktop space first, pin AOT, then rejoin Spaces.
+ *
+ * @param {import('electron').BrowserWindow} win
+ * @returns {boolean}
+ */
+function unstickOverlayFromDesktop(win) {
+  if (!win || win.isDestroyed()) return false;
+  try {
+    win.setVisibleOnAllWorkspaces(false);
+  } catch {
+    /* ignore */
+  }
+  setAlwaysOnTopSafe(win);
+  setVisibleOnAllWorkspacesSafe(win);
+  setAlwaysOnTopSafe(win);
+  try {
+    if (typeof win.moveTop === 'function') win.moveTop();
+  } catch {
+    /* ignore */
+  }
+  return true;
+}
+
+/**
+ * Conceal without BrowserWindow.hide().
+ * hide() is what makes the next show stick to the desktop on macOS.
+ *
+ * @param {import('electron').BrowserWindow} win
+ * @returns {boolean}
+ */
+function concealOverlayWindow(win) {
+  if (!win || win.isDestroyed()) return false;
+  try {
+    // No forward: do not keep a hidden hit-target; pass everything through.
+    win.setIgnoreMouseEvents(true);
+  } catch {
+    try {
+      win.setIgnoreMouseEvents(true, { forward: true });
+    } catch {
+      /* ignore */
+    }
+  }
+  try {
+    win.setOpacity(0);
+  } catch {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Reverse concealOverlayWindow. Does not call hide() or VOAW-first pin.
+ *
+ * @param {import('electron').BrowserWindow} win
+ * @param {{ focus?: boolean }} [opts]
+ * @returns {boolean}
+ */
+function revealOverlayWindow(win, opts = {}) {
+  if (!win || win.isDestroyed()) return false;
+  try {
+    win.setOpacity(1);
+  } catch {
+    /* ignore */
+  }
+  try {
+    if (opts.focus && typeof win.show === 'function') win.show();
+    else if (typeof win.isVisible === 'function' && !win.isVisible()) {
+      if (typeof win.show === 'function') win.show();
+    }
+  } catch {
+    try {
+      if (typeof win.showInactive === 'function') win.showInactive();
+    } catch {
+      return false;
+    }
+  }
+  resetOverlayClickThrough(win);
+  unstickOverlayFromDesktop(win);
+  return true;
+}
+
+/**
+ * True when the overlay is hide()'d (broken path) rather than opacity-concealed.
+ * @param {import('electron').BrowserWindow | null} win
+ * @returns {boolean}
+ */
+function overlayNeedsRebuild(win) {
+  if (!win || win.isDestroyed()) return true;
+  try {
+    return typeof win.isVisible === 'function' && !win.isVisible();
+  } catch {
+    return true;
+  }
+}
+
+/**
  * Extra BrowserWindow options that differ by OS.
  * @returns {Record<string, unknown>}
  */
@@ -149,6 +282,14 @@ function windowPlatformOptions() {
   if (isWin) {
     // Avoid thick frame edge artifacts on transparent frameless windows
     return { thickFrame: false };
+  }
+  if (isMac) {
+    // NSPanel survives hide/show without dropping to the desktop wallpaper level.
+    return {
+      type: 'panel',
+      hiddenInMissionControl: true,
+      acceptFirstMouse: true,
+    };
   }
   return {};
 }
@@ -210,6 +351,11 @@ module.exports = {
   setAlwaysOnTopSafe,
   setVisibleOnAllWorkspacesSafe,
   applyOverlayZOrder,
+  resetOverlayClickThrough,
+  unstickOverlayFromDesktop,
+  concealOverlayWindow,
+  revealOverlayWindow,
+  overlayNeedsRebuild,
   windowPlatformOptions,
   trayIconCandidates,
   trayIconSize,

@@ -23,9 +23,11 @@ const { execSync } = require('child_process');
 const HOOKS_DIR = path.join(os.homedir(), '.grok', 'hooks');
 const HOOK_FILE = path.join(HOOKS_DIR, 'pet.json');
 const HOOK_SCRIPT = path.join(HOOKS_DIR, 'pet-state.js');
+const HOOK_SUMMARY = path.join(HOOKS_DIR, 'activity-summary.js');
 const HOOK_RUNNER = path.join(HOOKS_DIR, 'pet-run.cmd');
 const HOOK_SH_RUNNER = path.join(HOOKS_DIR, 'pet-run.sh');
 const BUNDLED_SCRIPT = path.join(__dirname, 'pet-state-hook.js');
+const BUNDLED_SUMMARY = path.join(__dirname, 'activity-summary.js');
 const PORT = 7788;
 const HOST = '127.0.0.1';
 const HOOK_URL = `http://${HOST}:${PORT}/hook`;
@@ -44,6 +46,10 @@ const EVENT_STATE_MAP = {
    */
   Notification: 'idle',
   SessionEnd: 'sleep',
+  PermissionDenied: 'alert',
+  StopFailure: 'alert',
+  SubagentStart: 'working',
+  SubagentStop: 'working',
 };
 
 /** Events where matcher is meaningful (tool / notification filters). */
@@ -185,7 +191,9 @@ function isCurlAvailable(opts = {}) {
 function preferredHookMode(opts = {}) {
   if (opts.mode) return opts.mode;
   if (opts.forceCurl) return 'curl';
-  return isCurlAvailable(opts) ? 'curl' : 'command';
+  // Always prefer pet-state.js. curl only posts the pose name ("working"),
+  // which is why the bubble used to say "Getting things done…".
+  return 'command';
 }
 
 /**
@@ -262,6 +270,11 @@ function installHookScript(opts = {}) {
   fs.mkdirSync(HOOKS_DIR, { recursive: true });
   const src = fs.readFileSync(BUNDLED_SCRIPT, 'utf8');
   fs.writeFileSync(HOOK_SCRIPT, src, 'utf8');
+  try {
+    fs.writeFileSync(HOOK_SUMMARY, fs.readFileSync(BUNDLED_SUMMARY, 'utf8'), 'utf8');
+  } catch (err) {
+    console.error('[hooks] failed to copy activity-summary.js', err && err.message);
+  }
 
   // Unix shell runner (manual / relative fallback)
   const shBody = [
@@ -334,7 +347,7 @@ function uninstallHooks() {
     fs.unlinkSync(HOOK_FILE);
     removed = true;
   }
-  for (const p of [HOOK_SCRIPT, HOOK_RUNNER, HOOK_SH_RUNNER]) {
+  for (const p of [HOOK_SCRIPT, HOOK_SUMMARY, HOOK_RUNNER, HOOK_SH_RUNNER]) {
     if (fs.existsSync(p)) {
       try {
         fs.unlinkSync(p);
@@ -367,6 +380,7 @@ module.exports = {
   HOOKS_DIR,
   HOOK_FILE,
   HOOK_SCRIPT,
+  HOOK_SUMMARY,
   HOOK_RUNNER,
   HOOK_SH_RUNNER,
   HOOK_URL,

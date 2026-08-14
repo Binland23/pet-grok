@@ -7,9 +7,11 @@
   const statusDetailEl = document.getElementById('statusDetail');
   const statusToggleEl = document.getElementById('statusToggle');
   const api = window.petAPI;
-  const { advanceFrame, shouldPreserveFrame, framePathsForMode } = window.PetAnimationLoop;
+  const { advanceFrame, shouldPreserveFrame, shouldPauseRenderer, framePathsForMode } =
+    window.PetAnimationLoop;
   const {
     statusPrimaryLabel,
+    statusDetailText,
     shouldShowStatusChevron,
     resolveStatusChevronVisibility,
     isClickState,
@@ -17,11 +19,16 @@
   } = window.PetStatusChrome || {};
   const ASSET = './assets/race-crab/';
 
-  function primaryLabel(state) {
-    if (typeof statusPrimaryLabel === 'function') return statusPrimaryLabel(state);
+  function primaryLabel(state, detail) {
+    if (typeof statusPrimaryLabel === 'function') return statusPrimaryLabel(state, detail);
     const key = String(state || '').toLowerCase();
     if (key === 'click' || key === 'weee' || key === 'whee' || key === 'wooo') return 'WEEEE';
     return String(state || '');
+  }
+
+  function detailLineFor(state, detail) {
+    if (typeof statusDetailText === 'function') return statusDetailText(state, detail);
+    return String(detail || '').trim();
   }
 
   /** Mirrors resolveStatusChevronVisibility (shipped) for updateIgnore wiring. */
@@ -107,6 +114,13 @@
   let renderRaf = null;
   let renderStarted = false;
   let renderDirty = true;
+  /**
+   * Main tells us whether the overlay is intended to be on screen.
+   * `document.hidden` alone is wrong after showInactive() reawaken.
+   * null = not yet told; fall back to document.hidden.
+   * @type {boolean | null}
+   */
+  let overlayVisible = null;
   let celebrateTimer = null;
   let wakeTimer = null;
   let alertTimer = null;
@@ -553,22 +567,30 @@
   }
 
   const STATE_DETAIL_DEFAULTS = {
-    thinking: 'Thinking it through…',
-    working: 'Getting things done…',
-    done: 'All done!',
+    thinking: 'Reading your request',
+    done: 'Finished this turn',
     alert: 'Needs your attention',
   };
 
-  function paintDetailLine(text) {
-    displayedDetail = text || '';
+  function paintStatusChrome() {
+    const key = normalizeStateName(current || 'idle');
+    if (statusLabelEl) {
+      statusLabelEl.textContent = primaryLabel(key, displayedDetail);
+    }
     if (!statusDetailEl) return;
-    if (displayedDetail) {
-      statusDetailEl.textContent = displayedDetail;
+    const shown = detailLineFor(key, displayedDetail);
+    if (shown) {
+      statusDetailEl.textContent = shown;
       statusDetailEl.classList.add('has-detail');
     } else {
       statusDetailEl.textContent = '';
       statusDetailEl.classList.remove('has-detail');
     }
+  }
+
+  function paintDetailLine(text) {
+    displayedDetail = text || '';
+    paintStatusChrome();
   }
 
   function clearDetailHoldTimer() {
@@ -650,9 +672,6 @@
   function setStatus(text, detail) {
     if (!statusEl) return;
     const key = normalizeStateName(text);
-    const label = primaryLabel(key || text);
-    if (statusLabelEl) statusLabelEl.textContent = label;
-    else statusEl.textContent = label;
 
     const settleStates =
       key === 'idle' || key === 'sleep' || key === 'wake' || key === 'click';
@@ -664,17 +683,25 @@
         presentDetail('', { force: true });
       } else if (trimmed) {
         presentDetail(trimmed, { force: forceStates && (key === 'done' || key === 'alert') });
+      } else if (displayedDetail || lastDetail) {
+        // Empty working/thinking posts must not wipe a real activity line
+        paintStatusChrome();
       } else if (STATE_DETAIL_DEFAULTS[key]) {
         presentDetail(STATE_DETAIL_DEFAULTS[key], { force: key === 'done' || key === 'alert' });
-      } else if (!settleStates) {
-        // Keep held line during empty working/thinking posts
-        presentDetail(displayedDetail || lastDetail || STATE_DETAIL_DEFAULTS[key] || '');
+      } else {
+        paintStatusChrome();
       }
     } else if (settleStates) {
       presentDetail('', { force: true });
     } else if (STATE_DETAIL_DEFAULTS[key] && !displayedDetail && !lastDetail) {
       presentDetail(STATE_DETAIL_DEFAULTS[key]);
+    } else {
+      paintStatusChrome();
     }
+
+    // Always refresh the headline (EDIT → DONE) even when the detail line is held
+    paintStatusChrome();
+    if (!statusLabelEl) statusEl.textContent = primaryLabel(key || text, displayedDetail);
 
     statusEl.className = 'st-' + (key || 'idle') + (showStatus ? '' : ' hidden');
     // Only flash the chip on state label changes, not every detail refresh
@@ -697,7 +724,13 @@
 
     // Detail can update even when the animation frame is preserved (held in setStatus)
     if (Object.prototype.hasOwnProperty.call(options, 'detail')) {
-      lastDetail = options.detail == null ? '' : String(options.detail).trim();
+      const incoming = options.detail == null ? '' : String(options.detail).trim();
+      if (incoming) {
+        lastDetail = incoming;
+      } else if (next === 'idle' || next === 'sleep' || next === 'wake' || next === 'click') {
+        lastDetail = '';
+      }
+      // Empty thinking/working/done/alert keeps the last real activity line
     } else if (STATE_DETAIL_DEFAULTS[next] && !lastDetail) {
       lastDetail = STATE_DETAIL_DEFAULTS[next];
     }
@@ -776,7 +809,12 @@
         return;
       }
       const ms = onceDurationMs('wake', wakeMs);
-      wakeTimer = setTimeout(() => setState('idle'), ms);
+      wakeTimer = setTimeout(() => {
+        wakeTimer = null;
+        // Tell main so lastKnownState leaves `wake` and quiet-timeout can run.
+        if (api && typeof api.settleIdle === 'function') api.settleIdle();
+        else setState('idle');
+      }, ms);
       return;
     }
     if (next === 'done') {
@@ -956,6 +994,35 @@
     );
   }
 
+  function overlayIsPaused() {
+    if (typeof shouldPauseRenderer === 'function') {
+      return shouldPauseRenderer(overlayVisible, document.hidden);
+    }
+    if (overlayVisible === false) return true;
+    if (overlayVisible === true) return false;
+    return !!document.hidden;
+  }
+
+  function resetPointerChrome() {
+    overPet = false;
+    overChrome = false;
+    setStatusToggleVisible(false);
+    if (petAreaEl) petAreaEl.classList.remove('hot');
+    if (api) api.setIgnoreMouse(true);
+  }
+
+  function setOverlayVisible(visible) {
+    overlayVisible = !!visible;
+    if (!visible) {
+      stopRenderLoop();
+      resetPointerChrome();
+      return;
+    }
+    lastTs = performance.now();
+    resetPointerChrome();
+    markDirty();
+  }
+
   function stopRenderLoop() {
     if (renderTimer != null) clearTimeout(renderTimer);
     if (renderRaf != null) cancelAnimationFrame(renderRaf);
@@ -964,17 +1031,17 @@
   }
 
   function scheduleDraw(delayMs = 0) {
-    if (!renderStarted || document.hidden || renderTimer != null || renderRaf != null) return;
+    if (!renderStarted || overlayIsPaused() || renderTimer != null || renderRaf != null) return;
     renderTimer = setTimeout(() => {
       renderTimer = null;
-      if (document.hidden) return;
+      if (overlayIsPaused()) return;
       renderRaf = requestAnimationFrame(draw);
     }, Math.max(0, delayMs));
   }
 
   function markDirty() {
     renderDirty = true;
-    if (!renderStarted || document.hidden) return;
+    if (!renderStarted || overlayIsPaused()) return;
     if (renderTimer != null) {
       clearTimeout(renderTimer);
       renderTimer = null;
@@ -1262,7 +1329,7 @@
     }
   });
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) {
+    if (overlayIsPaused()) {
       stopRenderLoop();
       return;
     }
@@ -1285,6 +1352,18 @@
 
   async function init() {
     if (api) {
+      // Register before any await so hide/show during pack load is not missed.
+      api.onState((s, opts) => setState(s, opts || {}));
+      if (api.onOverlayVisible) {
+        api.onOverlayVisible((visible) => setOverlayVisible(visible));
+      }
+      if (api.onStateControl) {
+        api.onStateControl((payload) => {
+          if (payload && payload.mode === 'auto') {
+            releaseStickyHold();
+          }
+        });
+      }
       try {
         const initialPrefs = await api.getPrefs();
         if (initialPrefs && typeof initialPrefs.mute === 'boolean') muted = initialPrefs.mute;
@@ -1320,14 +1399,6 @@
       if (theme?.wakeMs) wakeMs = theme.wakeMs;
     } catch (_) { /* ignore */ }
 
-    api.onState((s, opts) => setState(s, opts || {}));
-    if (api.onStateControl) {
-      api.onStateControl((payload) => {
-        if (payload && payload.mode === 'auto') {
-          releaseStickyHold();
-        }
-      });
-    }
     api.setIgnoreMouse(true);
 
     if (api.onThemeChanged) {

@@ -49,6 +49,25 @@
   }
 
   /**
+   * Whether the overlay renderer should pause.
+   *
+   * `showInactive()` (SessionStart unhide, never-focused pet) often leaves
+   * `document.hidden === true` on macOS. Pausing on that flag alone freezes
+   * the sprite on the desktop after reawaken. Main's overlayVisible flag is
+   * the source of truth; document.hidden is only used when main has not said
+   * the overlay is showing.
+   *
+   * @param {boolean} overlayVisible
+   * @param {boolean} documentHidden
+   * @returns {boolean}
+   */
+  function shouldPauseRenderer(overlayVisible, documentHidden) {
+    if (overlayVisible === false) return true;
+    if (overlayVisible === true) return false;
+    return !!documentHidden;
+  }
+
+  /**
    * Choose frame paths for the active animation mode.
    *
    * - fluid: 24fps Imagine smooth packs (frames/ + animations.json)
@@ -70,5 +89,5 @@
     return Array.isArray(fluidFrames) ? fluidFrames : [];
   }
 
-  return { advanceFrame, shouldPreserveFrame, framePathsForMode };
+  return { advanceFrame, shouldPreserveFrame, shouldPauseRenderer, framePathsForMode };
 });

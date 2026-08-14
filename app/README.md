@@ -120,9 +120,9 @@ curl -s -X POST 127.0.0.1:7788/hide
 
 `GET http://127.0.0.1:7788/health` (or `/api/health`) → JSON `{ "ok": true, "service": "pet-grok", "lastState": "...", "pid": ... }`
 
-You should see the liquid-glass **status bubble** under the pet flash to **thinking** / **working** / **done**, and the sprite sheet animation change. With hooks refreshed, tool events also show a short plain-language activity line (e.g. `Running npm test`, `Editing pet.js`) that holds for several seconds so you can read it. Toggle the bubble from the dashboard (**Show status**), the tray / pet menu, or the hover chevron.
+You should see the liquid-glass **status bubble** under the pet name the **actual action** (e.g. **EDIT** / `renderer/pet.js`, **RUN** / `npm test`, **THINKING** / first words of your prompt) and the sprite animation change. Each line holds for several seconds so you can read it. Toggle the bubble from the dashboard (**Show status**), the tray / pet menu, or the hover chevron.
 
-**Activity detail** (tool + target) requires an up-to-date `pet-state.js` under `~/.grok/hooks/` — use **Refresh hooks** after upgrading Pet Grok.
+**Activity detail** (tool + file / command / query) requires the Node hook helper `pet-state.js` plus `activity-summary.js` under `~/.grok/hooks/` — Pet Grok copies both on launch and when you **Refresh hooks**. Plain `curl -d working` still moves the pose but cannot name the tool.
 
 **If states never change:** quit every Pet Grok / Electron instance (only one can own port `7788`), then `npm start` again. Zombie processes make hooks update a dead server.
 
@@ -146,7 +146,7 @@ npm run uninstall-hooks
 
 ### Generated `~/.grok/hooks/pet.json`
 
-Hooks use Grok’s **`type: "command"`** runner (macOS and Windows), with **absolute** `node` + `pet-state.js` paths (same shape as Clawd-on-Desk hooks that Grok loads from `~/.claude/settings.json`). Each event POSTs plain text to `http://127.0.0.1:7788/state`.
+Hooks use Grok’s **`type: "command"`** runner (macOS and Windows), with **absolute** `node` + `pet-state.js` paths (same shape as Clawd-on-Desk hooks that Grok loads from `~/.claude/settings.json`). Each event reads the Grok stdin envelope and POSTs `{ state, detail }` to `http://127.0.0.1:7788/state` so the bubble can say *what* Grok is doing.
 
 **Why not `type: "http"` to localhost?** Grok’s HTTP hook runner **SSRF-blocks** private/loopback IPs.
 

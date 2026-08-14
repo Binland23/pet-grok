@@ -194,30 +194,35 @@ describe('hooks payload (real makeHooksPayload)', () => {
     assert.match(hooks.curlStateCommand('done', { platform: 'darwin' }), /^curl /);
   });
 
-  it('installHooks prefers curl handlers when curl is available', () => {
+  it('installHooks prefers pet-state.js so tool envelopes become activity lines', () => {
     const prev = hooks.isInstalled() ? fs.readFileSync(hooks.HOOK_FILE, 'utf8') : null;
     const prevScript = fs.existsSync(hooks.HOOK_SCRIPT)
       ? fs.readFileSync(hooks.HOOK_SCRIPT, 'utf8')
+      : null;
+    const prevSummary = fs.existsSync(hooks.HOOK_SUMMARY)
+      ? fs.readFileSync(hooks.HOOK_SUMMARY, 'utf8')
       : null;
     try {
       const p = hooks.installHooks({ curlAvailable: true });
       assert.equal(path.basename(p), 'pet.json');
       assert.ok(fs.existsSync(hooks.HOOK_SCRIPT), 'pet-state.js must be installed');
+      assert.ok(fs.existsSync(hooks.HOOK_SUMMARY), 'activity-summary.js must be installed');
       assert.ok(fs.existsSync(hooks.HOOK_SH_RUNNER), 'pet-run.sh must be installed');
       const written = JSON.parse(fs.readFileSync(p, 'utf8'));
       const h = written.hooks.UserPromptSubmit[0].hooks[0];
       assert.equal(h.type, 'command');
       assert.equal(h.async, true);
-      assert.match(String(h.command), /^curl(?:\.exe)? /);
+      assert.match(String(h.command), /pet-state\.js/);
       assert.match(String(h.command), /thinking/);
-      // Absolute path — not relative ./pet-run.sh
-      assert.doesNotMatch(String(h.command), /pet-state\.js/);
+      // curl-only handlers cannot read stdin tool JSON
+      assert.doesNotMatch(String(h.command), /^curl(?:\.exe)? /);
       assert.ok(written.hooks.PreToolUse);
       assert.ok(written.hooks.Stop);
     } finally {
       if (prev != null) fs.writeFileSync(hooks.HOOK_FILE, prev, 'utf8');
       else if (hooks.isInstalled()) fs.unlinkSync(hooks.HOOK_FILE);
       if (prevScript != null) fs.writeFileSync(hooks.HOOK_SCRIPT, prevScript, 'utf8');
+      if (prevSummary != null) fs.writeFileSync(hooks.HOOK_SUMMARY, prevSummary, 'utf8');
     }
   });
 });
@@ -333,6 +338,19 @@ describe('parseStateBody (real shipped parser)', () => {
       }),
       'Running npm test'
     );
+    assert.equal(
+      summarizeHookDetail({
+        hookEventName: 'post_tool_use',
+        toolName: 'search_replace',
+        toolInput: { target_file: 'renderer/pet.js' },
+      }),
+      'Edited renderer/pet.js'
+    );
+    assert.equal(
+      summarizeHookDetail({ hookEventName: 'user_prompt_submit', prompt: 'revamp status' }),
+      'revamp status'
+    );
+    assert.equal(summarizeHookDetail({ state: 'working' }), '');
     assert.equal(summarizeHookDetail({ detail: '  custom   line  ' }), 'custom line');
     assert.equal(summarizeHookDetail(null), '');
   });
@@ -749,6 +767,12 @@ describe('platform helpers', () => {
     assert.ok(Array.isArray(platform.trayIconCandidates()));
     assert.ok(platform.trayIconCandidates().length > 0);
     assert.equal(typeof platform.restartHint(), 'string');
+    const opts = platform.windowPlatformOptions();
+    assert.equal(typeof opts, 'object');
+    if (process.platform === 'darwin') {
+      assert.equal(opts.type, 'panel');
+      assert.equal(opts.hiddenInMissionControl, true);
+    }
   });
 
   it('alwaysOnTopAttempts prefers screen-saver first', () => {
@@ -783,6 +807,134 @@ describe('platform helpers', () => {
     assert.equal(calls[1][2], 'screen-saver');
     assert.equal(calls[1][3], 1);
     assert.equal(calls[2][0], 'moveTop');
+  });
+
+  it('applyOverlayZOrder can skip VOAW on keep-alive so reawaken does not stick to the desktop', () => {
+    const calls = [];
+    const win = {
+      isDestroyed: () => false,
+      setVisibleOnAllWorkspaces() {
+        calls.push(['voaw']);
+      },
+      setAlwaysOnTop(flag, level) {
+        calls.push(['aot', level]);
+      },
+      moveTop() {
+        calls.push(['moveTop']);
+      },
+    };
+    platform.applyOverlayZOrder(win, { skipWorkspaces: true });
+    assert.deepEqual(
+      calls.map((c) => c[0]),
+      ['aot', 'moveTop']
+    );
+  });
+
+  it('unstickOverlayFromDesktop leaves the desktop space before re-pinning AOT', () => {
+    const calls = [];
+    const win = {
+      isDestroyed: () => false,
+      setVisibleOnAllWorkspaces(flag, opts) {
+        calls.push(['voaw', flag, opts || null]);
+      },
+      setAlwaysOnTop(flag, level) {
+        calls.push(['aot', flag, level]);
+      },
+      moveTop() {
+        calls.push(['moveTop']);
+      },
+    };
+    assert.equal(platform.unstickOverlayFromDesktop(win), true);
+    assert.equal(calls[0][0], 'voaw');
+    assert.equal(calls[0][1], false);
+    assert.equal(calls[1][0], 'aot');
+    assert.equal(calls[1][1], true);
+    const voawOn = calls.filter((c) => c[0] === 'voaw' && c[1] === true);
+    assert.ok(voawOn.length >= 1, 'must rejoin all workspaces after leaving desktop');
+    assert.equal(calls[calls.length - 1][0], 'moveTop');
+    assert.equal(platform.unstickOverlayFromDesktop(null), false);
+  });
+
+  it('concealOverlayWindow uses opacity instead of hide()', () => {
+    const calls = [];
+    const win = {
+      isDestroyed: () => false,
+      setIgnoreMouseEvents(ignore, opts) {
+        calls.push(['ignore', ignore, opts || null]);
+      },
+      setOpacity(value) {
+        calls.push(['opacity', value]);
+      },
+      hide() {
+        calls.push(['hide']);
+      },
+    };
+    assert.equal(platform.concealOverlayWindow(win), true);
+    assert.ok(calls.some((c) => c[0] === 'opacity' && c[1] === 0));
+    assert.ok(!calls.some((c) => c[0] === 'hide'));
+  });
+
+  it('revealOverlayWindow restores opacity and unsticks from the desktop', () => {
+    const calls = [];
+    const win = {
+      isDestroyed: () => false,
+      isVisible: () => true,
+      setOpacity(value) {
+        calls.push(['opacity', value]);
+      },
+      show() {
+        calls.push(['show']);
+      },
+      setIgnoreMouseEvents(ignore, opts) {
+        calls.push(['ignore', ignore, opts || null]);
+      },
+      setVisibleOnAllWorkspaces(flag) {
+        calls.push(['voaw', flag]);
+      },
+      setAlwaysOnTop(flag, level) {
+        calls.push(['aot', level]);
+      },
+      moveTop() {
+        calls.push(['moveTop']);
+      },
+    };
+    assert.equal(platform.revealOverlayWindow(win, { focus: true }), true);
+    assert.ok(calls.some((c) => c[0] === 'opacity' && c[1] === 1));
+    assert.ok(calls.some((c) => c[0] === 'show'));
+    assert.equal(calls[calls.findIndex((c) => c[0] === 'voaw')][1], false);
+  });
+
+  it('overlayNeedsRebuild is true only when hide() has already run', () => {
+    assert.equal(platform.overlayNeedsRebuild(null), true);
+    assert.equal(platform.overlayNeedsRebuild({ isDestroyed: () => true }), true);
+    assert.equal(
+      platform.overlayNeedsRebuild({ isDestroyed: () => false, isVisible: () => false }),
+      true
+    );
+    assert.equal(
+      platform.overlayNeedsRebuild({ isDestroyed: () => false, isVisible: () => true }),
+      false
+    );
+  });
+
+  it('resetOverlayClickThrough toggles ignore-mouse so forwarding is re-armed', () => {
+    const calls = [];
+    const win = {
+      isDestroyed: () => false,
+      setIgnoreMouseEvents(ignore, opts) {
+        calls.push([ignore, opts || null]);
+      },
+    };
+    assert.equal(platform.resetOverlayClickThrough(win), true);
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0][0], false);
+    assert.equal(calls[1][0], true);
+    assert.equal(calls[1][1] && calls[1][1].forward, true);
+    assert.equal(platform.resetOverlayClickThrough(null), false);
+    assert.equal(
+      platform.resetOverlayClickThrough({ isDestroyed: () => true }),
+      false
+    );
   });
 
   it('applyOverlayZOrder no-ops on destroyed windows', () => {

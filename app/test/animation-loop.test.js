@@ -6,6 +6,7 @@ const assert = require('node:assert/strict');
 const {
   advanceFrame,
   shouldPreserveFrame,
+  shouldPauseRenderer,
   framePathsForMode,
 } = require('../renderer/animation-loop');
 
@@ -96,6 +97,17 @@ describe('animation loop cursor', () => {
     assert.deepEqual(framePathsForMode('working', fluid, 'static', classic), classic);
     // Themes without a separate static pack fall back to the fluid list
     assert.deepEqual(framePathsForMode('working', fluid, 'static', []), fluid);
+  });
+
+  it('does not pause a shown overlay just because document.hidden is true', () => {
+    // showInactive() reawaken: Chromium often leaves document.hidden true
+    assert.equal(shouldPauseRenderer(true, true), false);
+    assert.equal(shouldPauseRenderer(true, false), false);
+    assert.equal(shouldPauseRenderer(false, false), true);
+    assert.equal(shouldPauseRenderer(false, true), true);
+    // Unknown main visibility: fall back to document.hidden
+    assert.equal(shouldPauseRenderer(null, true), true);
+    assert.equal(shouldPauseRenderer(null, false), false);
   });
 });
 

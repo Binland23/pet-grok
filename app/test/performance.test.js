@@ -95,14 +95,15 @@ describe('performance hardening', () => {
     }
   });
 
-  it('prefers curl and retains the Node hook fallback', () => {
-    assert.equal(hooks.preferredHookMode({ curlAvailable: true }), 'curl');
+  it('prefers pet-state.js so status can name the tool; curl remains opt-in', () => {
+    assert.equal(hooks.preferredHookMode({ curlAvailable: true }), 'command');
     assert.equal(hooks.preferredHookMode({ curlAvailable: false }), 'command');
-    const curl = hooks.makeHooksPayload({ platform: 'win32', curlAvailable: true });
+    assert.equal(hooks.preferredHookMode({ forceCurl: true }), 'curl');
+    const curl = hooks.makeHooksPayload({ platform: 'win32', forceCurl: true });
     assert.match(curl.hooks.PreToolUse[0].hooks[0].command, /^curl\.exe /);
     const node = hooks.makeHooksPayload({
       platform: 'win32',
-      curlAvailable: false,
+      curlAvailable: true,
       nodeBin: 'C:\\node.exe',
       scriptPath: 'C:\\pet-state.js',
     });
@@ -125,8 +126,23 @@ describe('performance hardening', () => {
   it('paces rendering, pauses while hidden, and reuses dashboard grids', () => {
     const pet = read('renderer/pet.js');
     const dashboard = read('renderer/dashboard.js');
+    const preload = read('preload/preload.js');
+    const main = read('main/main.js');
     assert.match(pet, /visibilitychange/);
     assert.match(pet, /renderDirty/);
+    assert.match(pet, /shouldPauseRenderer/);
+    assert.match(pet, /onOverlayVisible/);
+    assert.match(pet, /settleIdle/);
+    assert.match(preload, /pet:overlay-visible/);
+    assert.match(preload, /pet:settle-idle/);
+    assert.match(main, /WAKE_SETTLE_MS/);
+    assert.match(main, /recoverOverlayPresentation/);
+    assert.match(main, /concealOverlay\(/);
+    assert.match(main, /revealOverlay\(/);
+    assert.doesNotMatch(main, /mainWindow\.hide\(\)/);
+    assert.match(main, /unstickOverlayFromDesktop/);
+    assert.match(main, /powerMonitor\.on\('resume'/);
+    assert.match(main, /setBackgroundThrottling\(false\)/);
     assert.match(pet, /return 1000 \/ 30/);
     assert.match(pet, /1000 \/ Math\.max\(1, p\.fps\)/);
     assert.match(dashboard, /petsSignature/);

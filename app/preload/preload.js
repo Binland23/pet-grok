@@ -70,6 +70,17 @@ contextBridge.exposeInMainWorld('petAPI', {
   wakeFromIdle() {
     ipcRenderer.send('pet:wake-from-idle');
   },
+  settleIdle() {
+    ipcRenderer.send('pet:settle-idle');
+  },
+  onOverlayVisible(callback) {
+    const handler = (_event, payload) => {
+      const visible = !!(payload && payload.visible);
+      callback(visible);
+    };
+    ipcRenderer.on('pet:overlay-visible', handler);
+    return () => ipcRenderer.removeListener('pet:overlay-visible', handler);
+  },
   showContextMenu() {
     ipcRenderer.send('pet:context-menu');
   },

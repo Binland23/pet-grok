@@ -8,6 +8,9 @@ const path = require('node:path');
 const chrome = require('../renderer/status-chrome');
 const {
   statusPrimaryLabel,
+  statusPhaseLabel,
+  statusDetailText,
+  splitActivityLine,
   shouldShowStatusChevron,
   resolveStatusChevronVisibility,
   isClickState,
@@ -32,10 +35,41 @@ describe('status primary label (WEEEE path)', () => {
     }
   });
 
-  it('leaves non-click states as normalized names', () => {
-    assert.equal(statusPrimaryLabel('idle'), 'idle');
-    assert.equal(statusPrimaryLabel('WORKING'), 'working');
-    assert.equal(statusPrimaryLabel('done'), 'done');
+  it('uses human phase names when no tool activity is known', () => {
+    assert.equal(statusPrimaryLabel('idle'), 'Ready');
+    assert.equal(statusPrimaryLabel('WORKING'), 'Working');
+    assert.equal(statusPrimaryLabel('done'), 'Done');
+    assert.equal(statusPrimaryLabel('thinking'), 'Thinking');
+    assert.equal(statusPrimaryLabel('alert'), 'Needs you');
+    assert.equal(statusPhaseLabel('working'), 'Working');
+  });
+
+  it('promotes the tool verb while working so the headline is specific', () => {
+    assert.equal(statusPrimaryLabel('working', 'Editing renderer/pet.js'), 'Edit');
+    assert.equal(statusDetailText('working', 'Editing renderer/pet.js'), 'renderer/pet.js');
+    assert.equal(statusPrimaryLabel('working', 'Running npm test'), 'Run');
+    assert.equal(statusDetailText('working', 'Running npm test'), 'npm test');
+    assert.equal(statusPrimaryLabel('working', 'Reading src/index.js'), 'Read');
+    assert.equal(statusPrimaryLabel('alert', 'Failed: npm test'), 'Failed');
+    assert.equal(statusDetailText('alert', 'Failed: npm test'), 'npm test');
+  });
+
+  it('does not promote verbs on thinking/done — phase stays the headline', () => {
+    assert.equal(statusPrimaryLabel('thinking', 'Reading your request'), 'Thinking');
+    assert.equal(statusDetailText('thinking', 'Reading your request'), 'Reading your request');
+    assert.equal(statusPrimaryLabel('done', 'Edited renderer/pet.js'), 'Done');
+    assert.equal(statusDetailText('done', 'Edited renderer/pet.js'), 'Edited renderer/pet.js');
+    // Held thinking fallback must not become READ while the next tool starts
+    assert.equal(statusPrimaryLabel('working', 'Reading your request'), 'Working');
+    assert.equal(statusDetailText('working', 'Reading your request'), 'Reading your request');
+  });
+
+  it('splitActivityLine pulls verb + target from summarizer sentences', () => {
+    assert.deepEqual(splitActivityLine('Editing renderer/pet.js'), {
+      verb: 'Edit',
+      target: 'renderer/pet.js',
+    });
+    assert.equal(splitActivityLine('Needs your attention'), null);
   });
 
   it('isClickState / normalizeStatusState agree with label mapping', () => {
@@ -264,6 +298,7 @@ describe('shipped pet.js wiring', () => {
     const src = fs.readFileSync(petPath, 'utf8');
     assert.match(src, /PetStatusChrome/);
     assert.match(src, /statusPrimaryLabel/);
+    assert.match(src, /statusDetailText/);
     assert.match(src, /resolveStatusChevronVisibility/);
     assert.match(src, /chevronFromPointer/);
     assert.match(src, /chevronAlreadyVisible/);
@@ -271,6 +306,8 @@ describe('shipped pet.js wiring', () => {
     // playClickAck must paint WEEEE even before frames finish loading
     assert.match(src, /playClickAck/);
     assert.match(src, /setStatus\('click',\s*''\)/);
+    assert.doesNotMatch(src, /Getting things done/);
+    assert.doesNotMatch(src, /Thinking it through/);
     // Must not promote toggle reveal via bare showStatus alone
     assert.doesNotMatch(
       src,
